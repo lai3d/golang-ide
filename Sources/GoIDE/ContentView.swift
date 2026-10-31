@@ -331,6 +331,7 @@ struct DocumentEditor: View {
             reveal: document.revealTarget,
             quickFixRequest: workspace.quickFixRequest,
             foldRequest: workspace.foldRequest,
+            refactorRequest: workspace.refactorRequest,
             editRequest: workspace.editRequest,
             services: EditorServices(
                 completions: { await workspace.completions(in: document, at: $0) },
@@ -349,6 +350,9 @@ struct DocumentEditor: View {
                 rename: { offset in Task { await workspace.promptRename(in: document, at: offset) } },
                 codeActions: { await workspace.codeActions(in: document, at: $0, length: $1) },
                 performAction: { action in Task { await workspace.perform(action) } },
+                refactor: { kind, offset, length in
+                    Task { await workspace.refactor(kind, in: document, at: offset, length: length) }
+                },
                 runTest: { name in workspace.runTests(.test(name, in: document.url.deletingLastPathComponent())) },
                 toggleBreakpoint: { line in workspace.toggleBreakpoint(in: document, line: line) },
                 editBreakpointCondition: { line in workspace.editBreakpointCondition(in: document, line: line) },

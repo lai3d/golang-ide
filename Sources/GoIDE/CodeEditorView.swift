@@ -20,6 +20,7 @@ struct EditorServices {
     var rename: @MainActor (Int) -> Void
     var codeActions: @MainActor (_ offset: Int, _ length: Int) async -> [CodeAction]
     var performAction: @MainActor (CodeAction) -> Void
+    var refactor: @MainActor (RefactorKind, _ offset: Int, _ length: Int) -> Void
     var runTest: @MainActor (String) -> Void
     var toggleBreakpoint: @MainActor (Int) -> Void
     var editBreakpointCondition: @MainActor (Int) -> Void
@@ -51,6 +52,7 @@ struct CodeEditorView: NSViewRepresentable {
     var reveal: RevealTarget?
     var quickFixRequest = 0
     var foldRequest: FoldRequest?
+    var refactorRequest: RefactorRequest?
     var editRequest: EditRequest?
     var services: EditorServices
     var onChange: (String) -> Void
@@ -118,7 +120,11 @@ struct CodeEditorView: NSViewRepresentable {
 
         coordinator.textView = textView
         coordinator.ruler = ruler
+        // A new editor (tab switch) must not replay requests aimed at the previous one.
         coordinator.lastQuickFixRequest = quickFixRequest
+        coordinator.lastFoldRequestID = foldRequest?.id
+        coordinator.lastEditRequestID = editRequest?.id
+        coordinator.lastRefactorRequestID = refactorRequest?.id
         textView.string = text
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         ruler.textDidChange()
@@ -186,6 +192,14 @@ struct CodeEditorView: NSViewRepresentable {
             if isActive { coordinator.perform(foldRequest.action) }
         }
 
+        if let refactorRequest, refactorRequest.id != coordinator.lastRefactorRequestID {
+            coordinator.lastRefactorRequestID = refactorRequest.id
+            if isActive, let textView = coordinator.textView {
+                let selection = textView.selectedRange()
+                services.refactor(refactorRequest.kind, selection.location, selection.length)
+            }
+        }
+
         if quickFixRequest != coordinator.lastQuickFixRequest {
             coordinator.lastQuickFixRequest = quickFixRequest
             if isActive { coordinator.showQuickFixes() }
@@ -211,6 +225,7 @@ struct CodeEditorView: NSViewRepresentable {
         var lastRevealID: UUID?
         var lastQuickFixRequest = 0
         var lastFoldRequestID: UUID?
+        var lastRefactorRequestID: UUID?
         var lastEditRequestID: UUID?
         var isActive: Bool?
 
@@ -1181,10 +1196,25 @@ struct CodeEditorView: NSViewRepresentable {
                 ActionMenuItem(title: "Find References") { [weak self] in self?.parent.services.references(offset) },
                 ActionMenuItem(title: "Call Hierarchy") { [weak self] in self?.parent.services.callHierarchy(offset) },
                 ActionMenuItem(title: "Rename Symbol…") { [weak self] in self?.parent.services.rename(offset) },
+                refactorMenuItem(),
                 ActionMenuItem(title: "Quick Fix…") { [weak self] in
                     DispatchQueue.main.async { self?.showQuickFixes() }  // after this menu closes
                 },
             ]
+        }
+
+        private func refactorMenuItem() -> NSMenuItem {
+            let item = NSMenuItem(title: "Refactor", action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            for kind in RefactorKind.allCases {
+                submenu.addItem(ActionMenuItem(title: kind.title) { [weak self] in
+                    guard let self, let textView = self.textView else { return }
+                    let selection = textView.selectedRange()
+                    self.parent.services.refactor(kind, selection.location, selection.length)
+                })
+            }
+            item.submenu = submenu
+            return item
         }
 
         /// Pops up the code actions for the caret/selection below the caret (⌥↩).

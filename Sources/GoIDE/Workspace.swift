@@ -21,6 +21,52 @@ enum FoldAction: Hashable {
 }
 
 /// A request for the active editor to fold/unfold (from the menu).
+/// gopls refactorings offered in the Refactor menu (code action kinds).
+enum RefactorKind: String, CaseIterable, Hashable {
+    case extractFunction = "refactor.extract.function"
+    case extractMethod = "refactor.extract.method"
+    case extractVariable = "refactor.extract.variable"
+    case extractConstant = "refactor.extract.constant"
+    case inlineCall = "refactor.inline.call"
+    case inlineVariable = "refactor.inline.variable"
+
+    var title: String {
+        switch self {
+        case .extractFunction: "Extract Function"
+        case .extractMethod: "Extract Method"
+        case .extractVariable: "Extract Variable"
+        case .extractConstant: "Extract Constant"
+        case .inlineCall: "Inline Call"
+        case .inlineVariable: "Inline Variable"
+        }
+    }
+
+    /// What to select when the refactoring isn't offered.
+    var hint: String {
+        switch self {
+        case .extractFunction, .extractMethod: "select one or more complete statements"
+        case .extractVariable: "select an expression"
+        case .extractConstant: "select a constant expression"
+        case .inlineCall: "put the caret on a function call"
+        case .inlineVariable: "put the caret on a use of a local variable"
+        }
+    }
+
+    /// Older gopls versions use the generic kind and distinguish by title.
+    func matches(_ action: CodeAction) -> Bool {
+        guard let kind = action.kind else { return false }
+        if kind == rawValue { return true }
+        let generic = String(rawValue.split(separator: ".").prefix(2).joined(separator: "."))
+        let words = title.lowercased().split(separator: " ").map(String.init)
+        return kind == generic && words.allSatisfy { action.title.lowercased().contains($0) }
+    }
+}
+
+struct RefactorRequest: Equatable {
+    let id = UUID()
+    let kind: RefactorKind
+}
+
 struct FoldRequest: Equatable {
     let id = UUID()
     let action: FoldAction
@@ -212,10 +258,54 @@ final class Workspace {
     /// Bumped to ask the active editor to show its quick-fix menu (⌥↩).
     private(set) var quickFixRequest = 0
     private(set) var foldRequest: FoldRequest?
+    private(set) var refactorRequest: RefactorRequest?
     private(set) var editRequest: EditRequest?
 
     func requestEdit(_ action: EditAction) {
         editRequest = EditRequest(action: action)
+    }
+
+    func requestRefactor(_ kind: RefactorKind) {
+        refactorRequest = RefactorRequest(kind: kind)
+    }
+
+    /// Runs one gopls refactoring on the selection (`offset`, `length`).
+    func refactor(_ kind: RefactorKind, in document: Document, at offset: Int, length: Int) async {
+        guard lspReady, document.isGo, let lsp else { return }
+        let index = LineIndex(document.text)
+        let start = index.position(of: offset), end = index.position(of: offset + length)
+        let result = try? await lsp.request("textDocument/codeAction", params: [
+            "textDocument": ["uri": .string(document.url.absoluteString)],
+            "range": ["start": start.json, "end": end.json],
+            "context": ["diagnostics": [], "only": [.string(kind.rawValue), .string("refactor")], "triggerKind": 1],
+        ])
+        let actions = result.map(CodeAction.parseAll) ?? []
+        guard let action = actions.first(where: kind.matches) else {
+            flashStatus("\(kind.title) isn’t available here — \(kind.hint)")
+            return
+        }
+        let before = Set(Self.generatedNames(in: document.text).map(\.name))
+        await perform(action)
+        // Extractions introduce newFunction / newVar / …: offer to name it right away.
+        guard kind != .inlineCall, kind != .inlineVariable,
+              !CommandLine.arguments.contains("--snapshot"),
+              let fresh = Self.generatedNames(in: document.text).first(where: { !before.contains($0.name) })
+        else { return }
+        await promptRename(in: document, at: fresh.offset)
+    }
+
+    /// gopls's placeholder names for extracted code, with their first UTF-16 offset.
+    private static func generatedNames(in text: String) -> [(name: String, offset: Int)] {
+        let regex = /\bnew(?:Function|Method|Var|Const)\d*\b/
+        var seen = Set<String>()
+        var result: [(String, Int)] = []
+        for match in text.matches(of: regex) {
+            let name = String(match.output)
+            guard seen.insert(name).inserted else { continue }
+            let utf16 = NSRange(match.range, in: text).location
+            result.append((name, utf16))
+        }
+        return result
     }
 
     func requestFold(_ action: FoldAction) {

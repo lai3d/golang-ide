@@ -218,6 +218,24 @@ struct GoIDECommands: Commands {
                 Button("Quick Fix…") { workspace.requestQuickFix() }
                     .keyboardShortcut(.return, modifiers: .option)
                     .disabled(!workspace.isGoFile)
+                Divider()
+                // JetBrains-style: ⌥⌘M extract function, ⌥⌘V extract variable, ⌥⌘N inline.
+                Button(RefactorKind.extractFunction.title) { workspace.requestRefactor(.extractFunction) }
+                    .keyboardShortcut("m", modifiers: [.option, .command])
+                    .disabled(!workspace.isGoFile)
+                Button(RefactorKind.extractMethod.title) { workspace.requestRefactor(.extractMethod) }
+                    .disabled(!workspace.isGoFile)
+                Button(RefactorKind.extractVariable.title) { workspace.requestRefactor(.extractVariable) }
+                    .keyboardShortcut("v", modifiers: [.option, .command])
+                    .disabled(!workspace.isGoFile)
+                Button(RefactorKind.extractConstant.title) { workspace.requestRefactor(.extractConstant) }
+                    .disabled(!workspace.isGoFile)
+                Divider()
+                Button(RefactorKind.inlineCall.title) { workspace.requestRefactor(.inlineCall) }
+                    .keyboardShortcut("n", modifiers: [.option, .command])
+                    .disabled(!workspace.isGoFile)
+                Button(RefactorKind.inlineVariable.title) { workspace.requestRefactor(.inlineVariable) }
+                    .disabled(!workspace.isGoFile)
             }
             CommandMenu("Debug") {
                 Button("Start Debugging") { workspace.startDebugging() }

@@ -49,8 +49,14 @@ enum Snapshot {
                 if let column = value("--snapshot-column").flatMap(Int.init) {
                     end = min(lineRange.location + column, end)  // 0-based column
                 }
-                textView.setSelectedRange(NSRange(location: end, length: 0))
+                let length = value("--snapshot-select").flatMap(Int.init) ?? 0
+                textView.setSelectedRange(NSRange(location: end, length: min(length, ns.length - end)))
                 try? await Task.sleep(for: .milliseconds(900))  // let caret-driven requests land
+                if let name = value("--snapshot-refactor"),
+                   let kind = RefactorKind.allCases.first(where: { $0.rawValue.hasSuffix(name) }) {
+                    Workspace.current?.requestRefactor(kind)
+                    try? await Task.sleep(for: .milliseconds(2500))
+                }
             }
             if let text = value("--snapshot-type"),
                let textView = NSApp.windows.first?.firstResponder as? NSTextView {
