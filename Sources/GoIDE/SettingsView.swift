@@ -21,6 +21,7 @@ private struct EditorSettingsTab: View {
     @AppStorage("formatOnSave") private var formatOnSave = true
     @AppStorage("inlayHints") private var inlayHints = true
     @AppStorage("inlineBlame") private var inlineBlame = true
+    @AppStorage(SessionStore.reopenLastKey) private var reopenLast = true
 
     var body: some View {
         Form {
@@ -38,6 +39,7 @@ private struct EditorSettingsTab: View {
             Toggle("Format and organize imports on save", isOn: $formatOnSave)
             Toggle("Show inlay hints (parameter names, inferred types)", isOn: $inlayHints)
             Toggle("Show Git blame for the current line", isOn: $inlineBlame)
+            Toggle("Reopen the last project at launch", isOn: $reopenLast)
             Text("func main() {\n\tfmt.Println(\"preview\")\n}")
                 .font(.system(size: fontSize, design: .monospaced))
                 .lineLimit(nil)

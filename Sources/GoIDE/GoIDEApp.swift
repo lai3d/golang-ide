@@ -89,6 +89,15 @@ struct GoIDECommands: Commands {
                     if let focused { focused.presentOpenPanel() } else { openWindow(id: "workspace") }
                 }
                 .keyboardShortcut("o")
+                Menu("Open Recent") {
+                    ForEach(SessionStore.recentProjects.prefix(10), id: \.self) { url in
+                        Button(url.lastPathComponent) {
+                            if let focused { Task { await focused.openFolder(url) } }
+                        }
+                    }
+                    Divider()
+                    Button("Clear Menu") { SessionStore.clearRecents() }
+                }
             }
             CommandGroup(replacing: .printItem) {
                 Button("Open Quickly…") { workspace.showQuickOpen() }

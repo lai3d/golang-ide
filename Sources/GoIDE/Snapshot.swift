@@ -14,6 +14,8 @@ enum Snapshot {
             return args[i + 1]
         }
         guard let path = value("--snapshot") else { return }
+        // Keep debug runs out of the user's recent projects and saved tabs.
+        if let isolated = UserDefaults(suiteName: "GoIDE.snapshot") { SessionStore.defaults = isolated }
         let delay = value("--snapshot-delay").flatMap(Double.init) ?? 4
 
         Task {

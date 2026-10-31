@@ -59,6 +59,7 @@ struct ContentView: View {
 
 struct WelcomeView: View {
     @Environment(Workspace.self) private var workspace
+    @State private var recents = SessionStore.recentProjects
 
     var body: some View {
         VStack(spacing: 16) {
@@ -71,6 +72,38 @@ struct WelcomeView: View {
             Button("Open Folder…") { workspace.presentOpenPanel() }
                 .keyboardShortcut("o")
                 .controlSize(.large)
+            if !recents.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("Recent Projects").font(.headline)
+                        Spacer()
+                        Button("Clear") {
+                            SessionStore.clearRecents()
+                            recents = []
+                        }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                    }
+                    .padding(.bottom, 4)
+                    ForEach(recents.prefix(8), id: \.self) { url in
+                        Button { Task { await workspace.openFolder(url) } } label: {
+                            HStack {
+                                Image(systemName: "folder").foregroundStyle(.secondary)
+                                Text(url.lastPathComponent).fontWeight(.medium)
+                                Text((url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath)
+                                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                                Spacer()
+                            }
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(width: 420)
+                .padding(.top, 12)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

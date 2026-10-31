@@ -339,3 +339,38 @@ import GoIDECore
         #expect(changes.lines == [2: .added])
     }
 }
+
+@MainActor
+@Suite(.serialized) struct SessionRestoreTests {
+    @Test func restoresTabsAndRecents() async throws {
+        let suite = "goide-tests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        SessionStore.defaults = defaults
+        defer {
+            SessionStore.defaults = .standard
+            defaults.removePersistentDomain(forName: suite)
+        }
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-session-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.canonicalFileURL
+        for name in ["main.go", "a.go", "b.go"] {
+            try "package main\n".write(to: dir.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+
+        let first = Workspace()
+        await first.openFolder(dir)
+        #expect(first.documents.map(\.name) == ["main.go"])  // nothing saved yet: default file
+        first.openFile(dir.appendingPathComponent("a.go"))
+        first.openFile(dir.appendingPathComponent("b.go"))
+        first.activate(first.documents[1])  // a.go
+        await first.shutdown()
+
+        let second = Workspace()
+        await second.openFolder(dir)
+        #expect(second.documents.map(\.name) == ["main.go", "a.go", "b.go"])
+        #expect(second.activeDocument?.name == "a.go")
+        #expect(SessionStore.recentProjects.first?.path == dir.path)
+        await second.shutdown()
+    }
+}

@@ -152,7 +152,9 @@ final class Workspace {
     private(set) var rootURL: URL?
     private(set) var fileTree: [FileNode] = []
     private(set) var documents: [Document] = []
-    private(set) var activeDocument: Document?
+    private(set) var activeDocument: Document? {
+        didSet { if activeDocument !== oldValue { saveSession() } }
+    }
     private(set) var diagnostics: [String: [Diagnostic]] = [:]  // keyed by normalized path
     private(set) var lspStatus = "gopls: not started"
     /// Bumped each time gopls becomes ready, so editors can (re)request hints etc.
@@ -279,6 +281,10 @@ final class Workspace {
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
             if isDir.boolValue { folder = folder ?? url } else { files.append(url) }
         }
+        if folder == nil, files.isEmpty, SessionStore.reopenLastProject,
+           CommandLine.arguments.contains(where: { $0.hasPrefix("--snapshot") }) == false {
+            folder = SessionStore.recentProjects.first
+        }
         guard let folder else { return }
         await openFolder(folder, openDefaultFile: files.isEmpty)
         for file in files { openFile(file) }
@@ -304,11 +310,41 @@ final class Workspace {
         output = ""
         backStack = []
         searchResults = []
-        if openDefaultFile, let file = Self.defaultFile(in: fileTree) {
-            openFile(file)
+        SessionStore.noteOpened(url)
+        if openDefaultFile {
+            restoreSession(in: url)
         }
         refreshGit()
         await startLanguageServer(root: url)
+    }
+
+    // MARK: - Session
+
+    @ObservationIgnored private var restoringSession = false
+
+    /// Reopens the tabs open last time in this folder (else main.go or the first Go file).
+    private func restoreSession(in folder: URL) {
+        let saved = SessionStore.session(for: folder)
+        let files = (saved?.openFiles ?? []).map { URL(fileURLWithPath: $0) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+        restoringSession = true
+        defer { restoringSession = false }
+        if files.isEmpty {
+            if let file = Self.defaultFile(in: fileTree) { openFile(file) }
+        } else {
+            files.forEach { openFile($0) }
+            if let active = saved?.activeFile, let document = documents.first(where: { $0.url.path == active }) {
+                activeDocument = document
+            }
+        }
+        saveSession()
+    }
+
+    /// Remembers open tabs for this folder (called as tabs open, close or switch).
+    func saveSession() {
+        guard !restoringSession, let rootURL, self !== Self.placeholder else { return }
+        SessionStore.save(SessionStore.Session(openFiles: documents.map(\.url.path),
+                                               activeFile: activeDocument?.url.path), for: rootURL)
     }
 
     func reloadTree() {
@@ -536,6 +572,7 @@ final class Workspace {
             .map { $0 + 1 } ?? documents.count
         documents.insert(document, at: insertIndex)
         activeDocument = document
+        saveSession()
         sendDidOpen(document)
         refreshGit()  // fetch its HEAD version for change bars
         return document
@@ -578,6 +615,7 @@ final class Workspace {
                 activeDocument = documents.isEmpty ? nil : documents[min(index, documents.count - 1)]
             }
         }
+        saveSession()
     }
 
     /// Asks what to do with unsaved documents. Returns false if the user cancelled.
