@@ -282,6 +282,9 @@ struct GoIDECommands: Commands {
                 Button("Vet (go vet ./...)") { workspace.runGo(["vet", "./..."]) }
                     .keyboardShortcut("v", modifiers: [.control, .option, .command])
                 Button("Generate (go generate ./...)") { workspace.runGo(["generate", "./..."]) }
+                Button("Dependencies") { workspace.sidebarMode = .modules }
+                    .keyboardShortcut("m", modifiers: [.control, .shift])
+                    .disabled(workspace.rootURL == nil)
                 Menu("Modules") {
                     Button("Tidy (go mod tidy)") { workspace.runGo(["mod", "tidy"]) }
                     Button("Update Dependencies (go get -u ./...)") { workspace.runGo(["get", "-u", "./..."]) }

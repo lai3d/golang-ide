@@ -54,7 +54,7 @@ enum TestScope: Equatable {
 }
 
 enum SidebarMode: Hashable {
-    case files, search, outline, git
+    case files, search, outline, git, modules
 }
 
 /// A row in the Open Quickly palette: a file or a symbol.
@@ -182,6 +182,15 @@ final class Workspace {
     private(set) var backStack: [NavigationPoint] = []
     var bottomTab: BottomTab = .problems
     var sidebarMode: SidebarMode = .files
+
+    // Modules (Dependencies sidebar); see Workspace+Modules.swift
+    var modules: [ModuleGroup] = []
+    var goWork: GoWorkFile?
+    /// Module path → newest version, from `go list -m -u` (keyed per module directory).
+    var moduleUpdates: [URL: [String: String]] = [:]
+    var isCheckingModuleUpdates = false
+    var moduleUpdatesError: String?
+    @ObservationIgnored var checkedModuleUpdatesRoot: URL?
 
     // Find in project
     var searchQuery = ""
@@ -370,6 +379,10 @@ final class Workspace {
         searchResults = []
         SessionStore.noteOpened(url)
         loadRunConfigurations()
+        moduleUpdates = [:]
+        moduleUpdatesError = nil
+        checkedModuleUpdatesRoot = nil
+        reloadModules()
         if openDefaultFile {
             restoreSession(in: url)
         }
@@ -465,6 +478,7 @@ final class Workspace {
         guard !relevant.isEmpty else { return }
         reloadTree()
         notifyWatchedFiles(relevant)
+        if relevant.contains(where: { $0.hasSuffix("/go.mod") || $0.hasSuffix("/go.work") }) { reloadModules() }
         for document in documents { syncWithDisk(document) }
         refreshGit()
     }
@@ -1935,7 +1949,8 @@ final class Workspace {
 
     // MARK: - go run / build / test
 
-    func runGo(_ arguments: [String], environment extra: [String: String] = [:]) {
+    func runGo(_ arguments: [String], environment extra: [String: String] = [:], directory: URL? = nil,
+               onExit: (@MainActor (Int32) -> Void)? = nil) {
         guard let rootURL, !isRunning else { return }
         guard let go = ToolLocator.find("go") else {
             output = "go not found. Install Go from https://go.dev/dl/\n"
@@ -1946,14 +1961,15 @@ final class Workspace {
         let envNote = extra.isEmpty ? "" : extra.keys.sorted().map { "\($0)=… " }.joined()
         // Echo the command shell-style (quote words with spaces) so it reads as it ran.
         let shown = arguments.map { $0.contains(" ") || $0.isEmpty ? "\"\($0)\"" : $0 }.joined(separator: " ")
-        output = "$ \(envNote)go \(shown)\n"
+        let place = directory.map { GoModuleFinder.relativeUsePath($0, root: rootURL) }.flatMap { $0 == "." ? nil : "(\($0)) " } ?? ""
+        output = "\(place)$ \(envNote)go \(shown)\n"
         bottomTab = .output
         isRunning = true
 
         let process = Process()
         process.executableURL = go
         process.arguments = arguments
-        process.currentDirectoryURL = rootURL
+        process.currentDirectoryURL = directory ?? rootURL
         process.environment = ToolLocator.environment().merging(extra) { $1 }
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -1975,6 +1991,7 @@ final class Workspace {
                 self.isRunning = false
                 self.runProcess = nil
                 self.appendOutput("\n[process exited with status \(status)]\n")
+                onExit?(status)
             }
         }
         do {

@@ -83,6 +83,22 @@ enum Snapshot {
                 workspace.quickOpenQuery = query
                 try? await Task.sleep(for: .milliseconds(900))
             }
+            if args.contains("--snapshot-modules"), let workspace {
+                workspace.sidebarMode = .modules
+                for _ in 0..<300 where workspace.isCheckingModuleUpdates || workspace.checkedModuleUpdatesRoot == nil {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                if args.contains("--snapshot-gowork") {
+                    workspace.createGoWork()
+                    for _ in 0..<100 where workspace.isRunning || workspace.goWork == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                }
+                if args.contains("--snapshot-upgrade"), let group = workspace.modules.first(where: { !workspace.upgradableDirect(in: $0).isEmpty }) {
+                    workspace.upgrade(workspace.upgradableDirect(in: group).map(\.path), in: group)
+                    for _ in 0..<600 where workspace.isRunning { try? await Task.sleep(for: .milliseconds(100)) }
+                    workspace.bottomTab = .output
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
             if args.contains("--snapshot-outline"), let workspace {
                 workspace.sidebarMode = .outline
                 try? await Task.sleep(for: .milliseconds(1200))
