@@ -187,3 +187,25 @@ import GoIDECore
         #expect(workspace.searchError != nil && workspace.searchResults.isEmpty)
     }
 }
+
+@MainActor
+@Suite struct WorkspaceReferencesTests {
+    @Test(.enabled(if: GoIDECore.ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
+    func findsReferencesAcrossFilesUsingBuffers() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-ws-refs-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.canonicalFileURL
+        try "module example.com/r\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
+        try "package main\n\nfunc main() { greet(); greet() }\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+        try "package main\n\nfunc greet() {}\n".write(to: dir.appendingPathComponent("greet.go"), atomically: true, encoding: .utf8)
+
+        let workspace = Workspace()
+        await workspace.openFolder(dir)
+        let main = try #require(workspace.activeDocument)
+        await workspace.findReferences(in: main, at: ("package main\n\nfunc main() { " as NSString).length + 1)
+        #expect(workspace.bottomTab == .references)
+        #expect(workspace.referenceTitle == "3 references to ‘greet’")
+        #expect(workspace.referenceResults.map { ($0.path as NSString).lastPathComponent } == ["greet.go", "main.go"])
+    }
+}

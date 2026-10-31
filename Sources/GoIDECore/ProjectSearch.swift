@@ -57,6 +57,32 @@ public enum ProjectSearch {
         return results
     }
 
+    /// Turns LSP locations (e.g. references) into per-file results with line previews.
+    /// `text` supplies a file's contents (open buffer or disk) by path.
+    public static func results(for locations: [Location], text: (String) -> String?) -> [SearchFileResult] {
+        var byPath: [String: [Location]] = [:]
+        for location in locations {
+            guard let url = URL(string: location.uri), url.isFileURL else { continue }
+            byPath[url.path, default: []].append(location)
+        }
+        return byPath.compactMap { path, locations -> SearchFileResult? in
+            guard let contents = text(path) else { return nil }
+            let ns = contents as NSString
+            let index = LineIndex(contents)
+            let matches = locations
+                .sorted { ($0.start.line, $0.start.character) < ($1.start.line, $1.start.character) }
+                .map { location -> SearchMatch in
+                    let range = index.range(from: location.start, to: location.end)
+                    let lineRange = ns.lineRange(for: NSRange(location: range.location, length: 0))
+                    let (preview, previewRange) = makePreview(ns, line: lineRange, match: range)
+                    return SearchMatch(line: location.start.line, column: location.start.character,
+                                       length: range.length, preview: preview, previewRange: previewRange)
+                }
+            return SearchFileResult(path: path, matches: matches)
+        }
+        .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    }
+
     /// Searches every text file under `root`. `overrides` maps paths to unsaved buffer contents.
     public static func search(
         root: URL, query: String, options: SearchOptions,

@@ -69,6 +69,12 @@ struct GoIDEApp: App {
                 }
                 .keyboardShortcut("j", modifiers: [.control, .command])
                 .disabled(!workspace.isGoFile)
+                Button("Find References") {
+                    guard let document = workspace.activeDocument else { return }
+                    Task { await workspace.findReferences(in: document, at: document.caretOffset) }
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(!workspace.isGoFile)
                 Button("Go Back") { workspace.goBack() }
                     .keyboardShortcut(.leftArrow, modifiers: [.control, .command])
                     .disabled(!workspace.canGoBack)

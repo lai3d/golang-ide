@@ -3,7 +3,7 @@ import GoIDECore
 import Observation
 
 enum BottomTab: Hashable {
-    case problems, output
+    case problems, references, output
 }
 
 enum SidebarMode: Hashable {
@@ -99,6 +99,10 @@ final class Workspace {
     /// Bumped to ask the search field to take focus.
     private(set) var searchFocusRequest = 0
     @ObservationIgnored private var searchTask: Task<Void, Never>?
+
+    // Find references
+    private(set) var referenceResults: [SearchFileResult] = []
+    private(set) var referenceTitle = ""
     var formatOnSave = UserDefaults.standard.object(forKey: "formatOnSave") as? Bool ?? true {
         didSet { UserDefaults.standard.set(formatOnSave, forKey: "formatOnSave") }
     }
@@ -541,6 +545,26 @@ final class Workspace {
               let result = try? await lsp.request("textDocument/signatureHelp", params: params)
         else { return nil }
         return SignatureHelp.parse(result)
+    }
+
+    func findReferences(in document: Document, at offset: Int) async {
+        guard case let (lsp, .object(params))? = positionRequest(document, at: offset) else { return }
+        var request = params
+        request["context"] = ["includeDeclaration": true]
+        let symbol = GoIdentifier.wordRange(in: document.text as NSString, at: offset)
+            .map { (document.text as NSString).substring(with: $0) } ?? "symbol"
+        guard let result = try? await lsp.request("textDocument/references", params: .object(request)) else {
+            flashStatus("Find References failed")
+            return
+        }
+        referenceResults = ProjectSearch.results(for: Location.parseAll(result)) { path in
+            let key = Self.key(for: URL(fileURLWithPath: path))
+            return documents.first { Self.key(for: $0.url) == key }?.text
+                ?? (try? String(contentsOfFile: path, encoding: .utf8))
+        }
+        let count = referenceResults.reduce(0) { $0 + $1.matches.count }
+        referenceTitle = "\(count) reference\(count == 1 ? "" : "s") to ‘\(symbol)’"
+        bottomTab = .references
     }
 
     func jumpToDefinition(from document: Document, at offset: Int) async {

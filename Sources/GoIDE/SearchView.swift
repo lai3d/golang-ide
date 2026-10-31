@@ -76,7 +76,7 @@ private struct OptionToggle: View {
     }
 }
 
-private struct FileHeader: View {
+struct FileHeader: View {
     let path: String
     let count: Int
 
@@ -98,7 +98,7 @@ private struct FileHeader: View {
     }
 }
 
-private struct MatchRow: View {
+struct MatchRow: View {
     let match: SearchMatch
 
     var body: some View {

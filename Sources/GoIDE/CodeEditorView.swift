@@ -8,6 +8,7 @@ struct EditorServices {
     var hover: @MainActor (Int) async -> String?
     var signatureHelp: @MainActor (Int) async -> SignatureHelp?
     var definition: @MainActor (Int) -> Void
+    var references: @MainActor (Int) -> Void
     var caretMoved: @MainActor (Int) -> Void
 }
 
@@ -69,6 +70,7 @@ struct CodeEditorView: NSViewRepresentable {
         textView.onMouseExited = { [weak coordinator] in coordinator?.endHover() }
         textView.onMouseDown = { [weak coordinator] in coordinator?.dismissPopups() }
         textView.onCommandClick = { [weak coordinator] index in coordinator?.commandClick(at: index) }
+        textView.contextItems = { [weak coordinator] offset in coordinator?.contextMenuItems(at: offset) ?? [] }
 
         scrollView.documentView = textView
         scrollView.contentView.postsBoundsChangedNotifications = true
@@ -504,6 +506,16 @@ struct CodeEditorView: NSViewRepresentable {
             parent.services.definition(index)
         }
 
+        /// Language actions at the top of the editor's right-click menu.
+        func contextMenuItems(at offset: Int) -> [NSMenuItem] {
+            guard parent.highlightGo else { return [] }
+            dismissPopups()
+            return [
+                ActionMenuItem(title: "Jump to Definition") { [weak self] in self?.parent.services.definition(offset) },
+                ActionMenuItem(title: "Find References") { [weak self] in self?.parent.services.references(offset) },
+            ]
+        }
+
         func dismissPopups() {
             endHover()
             hideCompletions()
@@ -562,7 +574,21 @@ final class CodeTextView: NSTextView {
     var onMouseExited: (() -> Void)?
     var onMouseDown: (() -> Void)?
     var onCommandClick: ((Int) -> Void)?
+    var contextItems: ((Int) -> [NSMenuItem])?
     private var hoverArea: NSTrackingArea?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event) ?? NSMenu()
+        // Right-clicking outside the selection moves the caret there first, like Xcode.
+        if let index = characterIndex(atWindowPoint: event.locationInWindow),
+           !NSLocationInRange(index, selectedRange()) {
+            setSelectedRange(NSRange(location: index, length: 0))
+        }
+        let items = contextItems?(selectedRange().location) ?? []
+        for (position, item) in items.enumerated() { menu.insertItem(item, at: position) }
+        if !items.isEmpty { menu.insertItem(.separator(), at: items.count) }
+        return menu
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -632,4 +658,19 @@ final class CodeTextView: NSTextView {
         }
         return nil
     }
+}
+
+/// An NSMenuItem that runs a closure.
+final class ActionMenuItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(title: String, handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(run), keyEquivalent: "")
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    @objc private func run() { handler() }
 }

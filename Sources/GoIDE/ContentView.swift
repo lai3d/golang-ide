@@ -229,6 +229,7 @@ struct DocumentEditor: View {
                 hover: { await workspace.hover(in: document, at: $0) },
                 signatureHelp: { await workspace.signatureHelp(in: document, at: $0) },
                 definition: { offset in Task { await workspace.jumpToDefinition(from: document, at: offset) } },
+                references: { offset in Task { await workspace.findReferences(in: document, at: offset) } },
                 caretMoved: { document.caretOffset = $0 }),
             onChange: { workspace.updateText(of: document, to: $0) })
     }
@@ -334,6 +335,7 @@ struct BottomPanel: View {
             HStack {
                 Picker("Panel", selection: $workspace.bottomTab) {
                     Text("Problems (\(workspace.allProblems.count))").tag(BottomTab.problems)
+                    Text("References").tag(BottomTab.references)
                     Text("Output").tag(BottomTab.output)
                 }
                 .pickerStyle(.segmented)
@@ -352,6 +354,7 @@ struct BottomPanel: View {
             Divider()
             switch workspace.bottomTab {
             case .problems: ProblemsList()
+            case .references: ReferencesList()
             case .output: OutputView()
             }
         }
@@ -383,6 +386,33 @@ struct ProblemsList: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+            }
+            .listStyle(.plain)
+        }
+    }
+}
+
+struct ReferencesList: View {
+    @Environment(Workspace.self) private var workspace
+
+    var body: some View {
+        if workspace.referenceResults.isEmpty {
+            Text("Right-click a symbol and choose Find References (⇧⌘R).")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List {
+                Text(workspace.referenceTitle).font(.callout.weight(.semibold))
+                ForEach(workspace.referenceResults) { file in
+                    Section {
+                        ForEach(file.matches) { match in
+                            Button { workspace.open(match, in: file) } label: { MatchRow(match: match) }
+                                .buttonStyle(.plain)
+                        }
+                    } header: {
+                        FileHeader(path: workspace.displayPath(file.path), count: file.matches.count)
+                    }
+                }
             }
             .listStyle(.plain)
         }

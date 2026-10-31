@@ -51,6 +51,15 @@ enum Snapshot {
                 }
                 try? await Task.sleep(for: .milliseconds(1500))
             }
+            if let column = value("--snapshot-references").flatMap(Int.init), let workspace,
+               let document = workspace.activeDocument,
+               let textView = NSApp.windows.first?.firstResponder as? NSTextView {
+                // Caret is at the end of --snapshot-line; step back to the given 0-based column.
+                let ns = textView.string as NSString
+                let lineStart = ns.lineRange(for: NSRange(location: textView.selectedRange().location, length: 0)).location
+                await workspace.findReferences(in: document, at: lineStart + column)
+                try? await Task.sleep(for: .milliseconds(400))
+            }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()
                 try? await Task.sleep(for: .milliseconds(300))
