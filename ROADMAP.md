@@ -74,6 +74,19 @@ Released so far: [v0.1.0](https://github.com/lai3d/golang-ide/releases/tag/v0.1.
 | 6.6 | ✅ Integrated terminal | SwiftTerm (PTY + xterm emulation): login shell in the project folder, ⌃`, survives tab switches, restart on exit | 0.8h |
 | 6.7 | ✅ Go module tools | Go menu: vet (⌃⌥⌘V), generate, Modules ▸ tidy / update / download / verify; clickable `file.go:N` in Output | 0.3h |
 
+## Phase 7 — Productivity
+
+Released so far: [v0.2.0](https://github.com/lai3d/golang-ide/releases/tag/v0.2.0) (phases 1–6).
+
+| # | Item | Notes | Est. |
+|---|---|---|---|
+| 7.1 | ⬜ Editing commands | Toggle comment (⌘/), auto-close brackets & quotes, move line (⌥⌘[ / ⌥⌘]), duplicate line (⇧⌘D), indent / outdent (⌘] / ⌘[) | 0.6h |
+| 7.2 | ⬜ Snippets | gopls snippet completions with tab stops; built-in Go snippets (`iferr`, `fori`, `forr`, `func`, `test`, …) | 0.8h |
+| 7.3 | ⬜ Implementations | Go to implementation(s) and type definition | 0.3h |
+| 7.4 | ⬜ Breadcrumbs | Path › type › function above the editor, following the caret | 0.4h |
+| 7.5 | ⬜ Test coverage | Run tests with coverage; covered / uncovered lines tinted, % per file | 0.7h |
+| 7.6 | ⬜ Run configurations | Pick the main package (`cmd/…`), program arguments and environment for Run and Debug | 0.6h |
+
 ## Later / ideas
 
 - tree-sitter-go for incremental parsing (if semantic tokens + the regex lexer fall short)
