@@ -285,3 +285,43 @@ public struct DocumentHighlight: Sendable, Hashable {
         }
     }
 }
+
+// MARK: - Inlay hints
+
+/// An inline annotation such as a parameter name or an inferred type (`textDocument/inlayHint`).
+public struct InlayHint: Sendable, Hashable {
+    public enum Kind: Int, Sendable { case type = 1, parameter }
+    public let position: TextPosition
+    public let label: String
+    public let kind: Kind?
+    public let paddingLeft: Bool
+    public let paddingRight: Bool
+
+    public init(position: TextPosition, label: String, kind: Kind? = nil, paddingLeft: Bool = false, paddingRight: Bool = false) {
+        self.position = position
+        self.label = label
+        self.kind = kind
+        self.paddingLeft = paddingLeft
+        self.paddingRight = paddingRight
+    }
+
+    public static func parseAll(_ result: JSONValue) -> [InlayHint] {
+        (result.arrayValue ?? []).compactMap { value in
+            guard let position = TextPosition(json: value["position"]) else { return nil }
+            // label: string | InlayHintLabelPart[]
+            let label = value["label"]?.stringValue
+                ?? value["label"]?.arrayValue?.compactMap { $0["value"]?.stringValue }.joined()
+            guard let label, !label.isEmpty else { return nil }
+            return InlayHint(position: position, label: label,
+                             kind: value["kind"]?.intValue.flatMap(Kind.init(rawValue:)),
+                             paddingLeft: value["paddingLeft"]?.boolValue ?? false,
+                             paddingRight: value["paddingRight"]?.boolValue ?? false)
+        }
+    }
+
+    /// gopls settings that turn the hints on (sent as initializationOptions).
+    public static let goplsSettings: JSONValue = ["hints": [
+        "assignVariableTypes": true, "compositeLiteralFields": true, "constantValues": true,
+        "functionTypeParameters": true, "parameterNames": true, "rangeVariableTypes": true,
+    ]]
+}

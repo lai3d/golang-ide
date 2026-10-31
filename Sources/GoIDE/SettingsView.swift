@@ -19,6 +19,7 @@ private struct EditorSettingsTab: View {
     @AppStorage(EditorSettings.fontSizeKey) private var fontSize = 13.0
     @AppStorage(EditorSettings.tabWidthKey) private var tabWidth = 4
     @AppStorage("formatOnSave") private var formatOnSave = true
+    @AppStorage("inlayHints") private var inlayHints = true
 
     var body: some View {
         Form {
@@ -34,6 +35,7 @@ private struct EditorSettingsTab: View {
             .pickerStyle(.segmented)
             .frame(width: 280)
             Toggle("Format and organize imports on save", isOn: $formatOnSave)
+            Toggle("Show inlay hints (parameter names, inferred types)", isOn: $inlayHints)
             Text("func main() {\n\tfmt.Println(\"preview\")\n}")
                 .font(.system(size: fontSize, design: .monospaced))
                 .lineLimit(nil)

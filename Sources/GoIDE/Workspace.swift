@@ -101,6 +101,8 @@ final class Workspace {
     private(set) var activeDocument: Document?
     private(set) var diagnostics: [String: [Diagnostic]] = [:]  // keyed by normalized path
     private(set) var lspStatus = "gopls: not started"
+    /// Bumped each time gopls becomes ready, so editors can (re)request hints etc.
+    private(set) var languageServerEpoch = 0
     private(set) var output = ""
     private(set) var isRunning = false
     private(set) var backStack: [NavigationPoint] = []
@@ -584,6 +586,17 @@ final class Workspace {
         return HoverContent.parse(result).map { String($0.prefix(4000)) }
     }
 
+    /// Inlay hints for the whole document.
+    func inlayHints(in document: Document) async -> [InlayHint] {
+        guard lspReady, document.isGo, let lsp else { return [] }
+        let lines = LineIndex(document.text).lineCount
+        guard let result = try? await lsp.request("textDocument/inlayHint", params: [
+            "textDocument": ["uri": .string(document.url.absoluteString)],
+            "range": ["start": TextPosition(line: 0, character: 0).json, "end": TextPosition(line: lines, character: 0).json],
+        ]) else { return [] }
+        return InlayHint.parseAll(result)
+    }
+
     func documentHighlights(in document: Document, at offset: Int) async -> [DocumentHighlight] {
         guard case let (lsp, params)? = positionRequest(document, at: offset),
               let result = try? await lsp.request("textDocument/documentHighlight", params: params)
@@ -812,6 +825,10 @@ final class Workspace {
     /// Requests gopls sends to us.
     private func handleServerRequest(method: String, params: JSONValue) -> JSONValue? {
         switch method {
+        case "workspace/configuration":
+            // Same settings as initializationOptions, so gopls keeps hints enabled.
+            let items = params["items"]?.arrayValue ?? []
+            return .array(items.map { $0["section"]?.stringValue == "gopls" ? InlayHint.goplsSettings : .null })
         case "workspace/applyEdit":
             apply(WorkspaceEdit.parse(params["edit"] ?? .null))
             return ["applied": true]
@@ -993,6 +1010,7 @@ final class Workspace {
             try client.notify("initialized", params: [:])
             lspReady = true
             lspStatus = "gopls: ready"
+            languageServerEpoch += 1
             documents.forEach(sendDidOpen)
         } catch {
             if lsp === client { lsp = nil }
@@ -1071,6 +1089,7 @@ final class Workspace {
             ]],
             "definition": ["linkSupport": false],
             "documentHighlight": ["dynamicRegistration": false],
+            "inlayHint": ["dynamicRegistration": false],
             "rename": ["prepareSupport": true],
             "documentSymbol": ["hierarchicalDocumentSymbolSupport": true],
             "codeAction": [
@@ -1095,6 +1114,7 @@ final class Workspace {
             "processId": .int(Int(ProcessInfo.processInfo.processIdentifier)),
             "clientInfo": ["name": "GoIDE", "version": "0.1.0"],
             "rootUri": .string(root.absoluteString),
+            "initializationOptions": InlayHint.goplsSettings,
             "workspaceFolders": [["uri": .string(root.absoluteString), "name": .string(root.lastPathComponent)]],
             "capabilities": [
                 "textDocument": textDocument,

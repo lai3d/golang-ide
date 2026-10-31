@@ -8,6 +8,7 @@ struct EditorServices {
     var hover: @MainActor (Int) async -> String?
     var signatureHelp: @MainActor (Int) async -> SignatureHelp?
     var highlights: @MainActor (Int) async -> [DocumentHighlight]
+    var inlayHints: @MainActor () async -> [InlayHint]
     var definition: @MainActor (Int) -> Void
     var references: @MainActor (Int) -> Void
     var rename: @MainActor (Int) -> Void
@@ -30,6 +31,8 @@ struct CodeEditorView: NSViewRepresentable {
     var isEditable: Bool
     var isActive: Bool
     var settings = EditorSettings()
+    var showInlayHints = true
+    var languageServerEpoch = 0
     var diagnostics: [Diagnostic]
     var reveal: RevealTarget?
     var quickFixRequest = 0
@@ -131,6 +134,12 @@ struct CodeEditorView: NSViewRepresentable {
             coordinator.applyExternalChange(text)
         } else if coordinator.appliedDiagnostics != diagnostics || coordinator.appliedHighlightGo != highlightGo {
             coordinator.applyStyling()
+            coordinator.scheduleInlayHints(after: .milliseconds(150))  // gopls re-checked the file
+        }
+        if coordinator.appliedShowInlayHints != showInlayHints || coordinator.appliedEpoch != languageServerEpoch {
+            coordinator.appliedShowInlayHints = showInlayHints
+            coordinator.appliedEpoch = languageServerEpoch
+            coordinator.scheduleInlayHints(after: .milliseconds(300))
         }
         coordinator.updateTestMarkers()
         if let ruler = coordinator.ruler {
@@ -189,6 +198,7 @@ struct CodeEditorView: NSViewRepresentable {
 
         func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
             lastReplacement = replacementString
+            pendingEdit = (range, (replacementString?.utf16.count ?? 0) - range.length)
             return true
         }
 
@@ -196,7 +206,9 @@ struct CodeEditorView: NSViewRepresentable {
             guard let textView else { return }
             parent.onChange(textView.string)
             ruler?.textDidChange()
+            shiftInlayHints()
             applyStyling()
+            scheduleInlayHints(after: .milliseconds(600))
             endHover()
             clearOccurrences()  // stale after an edit; the selection change re-requests
 
@@ -235,6 +247,88 @@ struct CodeEditorView: NSViewRepresentable {
             ruler?.needsDisplay = true
             if signaturePopup.isVisible { scheduleSignatureHelp(after: .milliseconds(80)) }
             scheduleOccurrences()
+        }
+
+        // MARK: Inlay hints
+
+        struct PlacedHint {
+            var offset: Int
+            let label: String
+            let paddingLeft: Bool
+            let paddingRight: Bool
+        }
+
+        var appliedShowInlayHints: Bool?
+        var appliedEpoch: Int?
+        private var placedHints: [PlacedHint] = []
+        private var inlayTask: Task<Void, Never>?
+        private var pendingEdit: (range: NSRange, delta: Int)?
+
+        func scheduleInlayHints(after delay: Duration) {
+            inlayTask?.cancel()
+            guard parent.highlightGo, parent.showInlayHints else {
+                if !placedHints.isEmpty {
+                    placedHints = []
+                    applyStyling()
+                }
+                return
+            }
+            inlayTask = Task { [weak self] in
+                if delay > .zero { try? await Task.sleep(for: delay) }
+                guard !Task.isCancelled, let self, let textView = self.textView else { return }
+                let text = textView.string
+                let hints = await self.parent.services.inlayHints()
+                guard !Task.isCancelled, textView.string == text else { return }  // edited meanwhile
+                let index = LineIndex(text)
+                self.placedHints = hints.map {
+                    PlacedHint(offset: index.offset(of: $0.position), label: $0.label,
+                               paddingLeft: $0.paddingLeft, paddingRight: $0.paddingRight)
+                }
+                self.applyStyling()
+            }
+        }
+
+        /// Keeps existing hints attached to their text while typing (until fresh ones arrive).
+        private func shiftInlayHints() {
+            guard let edit = pendingEdit else { return }
+            pendingEdit = nil
+            let end = NSMaxRange(edit.range)
+            placedHints = placedHints.compactMap { hint in
+                var hint = hint
+                if hint.offset >= end {
+                    hint.offset += edit.delta
+                } else if hint.offset > edit.range.location {
+                    return nil  // its text was replaced
+                }
+                return hint
+            }
+        }
+
+        /// Opens a gap (kerning on the preceding character) for each hint and hands the
+        /// labels to the text view, which draws them in the gaps. Text and undo are untouched.
+        private func applyInlayHints(to storage: NSTextStorage, in textView: CodeTextView) {
+            guard parent.highlightGo, parent.showInlayHints, !placedHints.isEmpty else {
+                textView.inlayItems = []
+                return
+            }
+            let ns = storage.string as NSString
+            let font = NSFont.monospacedSystemFont(ofSize: max(9, parent.settings.fontSize - 2), weight: .regular)
+            var items: [CodeTextView.InlayItem] = []
+            var used = Set<Int>()
+            for hint in placedHints where hint.offset > 0 && hint.offset <= ns.length && !used.contains(hint.offset) {
+                guard ns.character(at: hint.offset - 1) != 0x0A else { continue }  // no gap at a line start
+                used.insert(hint.offset)
+                let label = NSAttributedString(string: hint.label, attributes: [
+                    .font: font, .foregroundColor: NSColor.secondaryLabelColor,
+                ])
+                let padLeft: CGFloat = hint.paddingLeft ? 4 : 1
+                let padRight: CGFloat = hint.paddingRight ? 4 : 1
+                let width = ceil(label.size().width) + 8 + padLeft + padRight
+                storage.addAttribute(.kern, value: width, range: NSRange(location: hint.offset - 1, length: 1))
+                items.append(CodeTextView.InlayItem(offset: hint.offset, label: label, width: width,
+                                                    padLeft: padLeft, padRight: padRight))
+            }
+            textView.inlayItems = items
         }
 
         // MARK: Occurrence highlights
@@ -707,6 +801,7 @@ struct CodeEditorView: NSViewRepresentable {
                     .toolTip: diagnostic.message,
                 ], range: range)
             }
+            applyInlayHints(to: storage, in: textView)
             storage.endEditing()
 
             var markers: [Int: Diagnostic.Severity] = [:]
@@ -732,6 +827,48 @@ final class CodeTextView: NSTextView {
     var onCommandClick: ((Int) -> Void)?
     var contextItems: ((Int) -> [NSMenuItem])?
     private var hoverArea: NSTrackingArea?
+    struct InlayItem {
+        let offset: Int
+        let label: NSAttributedString
+        let width: CGFloat
+        let padLeft: CGFloat
+        let padRight: CGFloat
+    }
+
+    /// Inlay hint labels, drawn into the kerning gaps the coordinator opened before `offset`.
+    var inlayItems: [InlayItem] = [] {
+        didSet { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard !inlayItems.isEmpty, let layoutManager, let textContainer else { return }
+        let length = (string as NSString).length
+        let origin = textContainerOrigin
+        for item in inlayItems where item.offset > 0 && item.offset <= length {
+            let previous = layoutManager.glyphIndexForCharacter(at: item.offset - 1)
+            var lineRect = layoutManager.lineFragmentRect(forGlyphAt: previous, effectiveRange: nil)
+            lineRect.origin.y += origin.y
+            guard lineRect.intersects(dirtyRect) else { continue }
+            // The gap ends where the next glyph starts.
+            let gapEnd: CGFloat
+            if item.offset < length {
+                let next = layoutManager.glyphIndexForCharacter(at: item.offset)
+                gapEnd = layoutManager.lineFragmentRect(forGlyphAt: next, effectiveRange: nil).minX
+                    + layoutManager.location(forGlyphAt: next).x + origin.x
+            } else {
+                gapEnd = layoutManager.boundingRect(forGlyphRange: NSRange(location: previous, length: 1), in: textContainer).maxX
+                    + origin.x
+            }
+            let pill = NSRect(x: gapEnd - item.width + item.padLeft, y: lineRect.minY + 2,
+                              width: item.width - item.padLeft - item.padRight, height: lineRect.height - 4)
+            NSColor.quaternaryLabelColor.withAlphaComponent(0.12).setFill()
+            NSBezierPath(roundedRect: pill, xRadius: 4, yRadius: 4).fill()
+            let size = item.label.size()
+            item.label.draw(at: NSPoint(x: pill.minX + 4, y: pill.midY - size.height / 2))
+        }
+    }
+
     /// Zero-based line where the debugger is paused (highlighted).
     var executionLine: Int? {
         didSet { if executionLine != oldValue { needsDisplay = true } }

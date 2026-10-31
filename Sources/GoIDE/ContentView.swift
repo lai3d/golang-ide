@@ -232,6 +232,7 @@ struct DocumentEditor: View {
     @Environment(Workspace.self) private var workspace
     @AppStorage(EditorSettings.fontSizeKey) private var fontSize = 13.0
     @AppStorage(EditorSettings.tabWidthKey) private var tabWidth = 4
+    @AppStorage("inlayHints") private var showInlayHints = true
     let document: Document
     let isActive: Bool
 
@@ -246,6 +247,8 @@ struct DocumentEditor: View {
             isEditable: !document.isReadOnly,
             isActive: isActive,
             settings: EditorSettings(fontSize: fontSize, tabWidth: tabWidth),
+            showInlayHints: showInlayHints,
+            languageServerEpoch: workspace.languageServerEpoch,
             diagnostics: workspace.diagnostics(for: document),
             reveal: document.revealTarget,
             quickFixRequest: workspace.quickFixRequest,
@@ -254,6 +257,7 @@ struct DocumentEditor: View {
                 hover: { await workspace.hover(in: document, at: $0) },
                 signatureHelp: { await workspace.signatureHelp(in: document, at: $0) },
                 highlights: { await workspace.documentHighlights(in: document, at: $0) },
+                inlayHints: { await workspace.inlayHints(in: document) },
                 definition: { offset in Task { await workspace.jumpToDefinition(from: document, at: offset) } },
                 references: { offset in Task { await workspace.findReferences(in: document, at: offset) } },
                 rename: { offset in Task { await workspace.promptRename(in: document, at: offset) } },
