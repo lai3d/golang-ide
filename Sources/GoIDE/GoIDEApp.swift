@@ -62,6 +62,13 @@ struct WorkspaceWindow: View {
 struct GoIDEApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    init() {
+        // `GoIDE <folder>` / `open -a GoIDE --args <folder>`: without this, AppKit treats the
+        // folder as a document to open and SwiftUI then skips creating the first window.
+        // We read the arguments ourselves (Workspace.handleLaunchArguments).
+        UserDefaults.standard.register(defaults: ["NSTreatUnknownArgumentsAsOpen": "NO"])
+    }
+
     var body: some Scene {
         WindowGroup("GoIDE", id: "workspace") {
             WorkspaceWindow()
