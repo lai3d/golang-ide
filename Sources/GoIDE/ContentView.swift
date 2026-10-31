@@ -258,6 +258,7 @@ struct DocumentEditor: View {
                 signatureHelp: { await workspace.signatureHelp(in: document, at: $0) },
                 highlights: { await workspace.documentHighlights(in: document, at: $0) },
                 inlayHints: { await workspace.inlayHints(in: document) },
+                semanticTokens: { await workspace.semanticTokens(in: document) },
                 definition: { offset in Task { await workspace.jumpToDefinition(from: document, at: offset) } },
                 references: { offset in Task { await workspace.findReferences(in: document, at: offset) } },
                 rename: { offset in Task { await workspace.promptRename(in: document, at: offset) } },

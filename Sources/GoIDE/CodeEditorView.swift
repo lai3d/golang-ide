@@ -9,6 +9,7 @@ struct EditorServices {
     var signatureHelp: @MainActor (Int) async -> SignatureHelp?
     var highlights: @MainActor (Int) async -> [DocumentHighlight]
     var inlayHints: @MainActor () async -> [InlayHint]
+    var semanticTokens: @MainActor () async -> [SemanticToken]
     var definition: @MainActor (Int) -> Void
     var references: @MainActor (Int) -> Void
     var rename: @MainActor (Int) -> Void
@@ -258,6 +259,13 @@ struct CodeEditorView: NSViewRepresentable {
             let paddingRight: Bool
         }
 
+        struct SemanticRun {
+            var range: NSRange
+            let color: NSColor
+        }
+
+        /// gopls semantic coloring, layered over the regex lexer.
+        private var semanticRuns: [SemanticRun] = []
         var appliedShowInlayHints: Bool?
         var appliedEpoch: Int?
         private var placedHints: [PlacedHint] = []
@@ -266,23 +274,39 @@ struct CodeEditorView: NSViewRepresentable {
 
         func scheduleInlayHints(after delay: Duration) {
             inlayTask?.cancel()
-            guard parent.highlightGo, parent.showInlayHints else {
-                if !placedHints.isEmpty {
+            guard parent.highlightGo else {
+                if !placedHints.isEmpty || !semanticRuns.isEmpty {
                     placedHints = []
+                    semanticRuns = []
                     applyStyling()
                 }
                 return
+            }
+            if !parent.showInlayHints, !placedHints.isEmpty {
+                placedHints = []
+                applyStyling()
             }
             inlayTask = Task { [weak self] in
                 if delay > .zero { try? await Task.sleep(for: delay) }
                 guard !Task.isCancelled, let self, let textView = self.textView else { return }
                 let text = textView.string
-                let hints = await self.parent.services.inlayHints()
+                async let hints = self.parent.showInlayHints ? self.parent.services.inlayHints() : []
+                async let tokens = self.parent.services.semanticTokens()
+                let (newHints, newTokens) = await (hints, tokens)
                 guard !Task.isCancelled, textView.string == text else { return }  // edited meanwhile
                 let index = LineIndex(text)
-                self.placedHints = hints.map {
+                self.placedHints = newHints.map {
                     PlacedHint(offset: index.offset(of: $0.position), label: $0.label,
                                paddingLeft: $0.paddingLeft, paddingRight: $0.paddingRight)
+                }
+                let ns = text as NSString
+                self.semanticRuns = newTokens.compactMap { token in
+                    guard let color = EditorTheme.color(forSemantic: token.type, modifiers: token.modifiers) else { return nil }
+                    let start = index.offset(of: TextPosition(line: token.line, character: token.start))
+                    let range = NSRange(location: start, length: token.length)
+                    // gopls marks import paths ("fmt") as namespaces: keep them string-colored.
+                    guard NSMaxRange(range) <= ns.length, ns.character(at: start) != 0x22 else { return nil }
+                    return SemanticRun(range: range, color: color)
                 }
                 self.applyStyling()
             }
@@ -301,6 +325,15 @@ struct CodeEditorView: NSViewRepresentable {
                     return nil  // its text was replaced
                 }
                 return hint
+            }
+            semanticRuns = semanticRuns.compactMap { run in
+                var run = run
+                if run.range.location >= end {
+                    run.range.location += edit.delta
+                } else if NSMaxRange(run.range) > edit.range.location {
+                    return nil  // overlaps the edit: wait for fresh tokens
+                }
+                return run
             }
         }
 
@@ -787,6 +820,9 @@ struct CodeEditorView: NSViewRepresentable {
             if parent.highlightGo {
                 for token in GoHighlighter.tokenize(text) {
                     storage.addAttribute(.foregroundColor, value: EditorTheme.color(for: token.kind), range: token.range)
+                }
+                for run in semanticRuns where NSMaxRange(run.range) <= storage.length {
+                    storage.addAttribute(.foregroundColor, value: run.color, range: run.range)
                 }
             }
             let index = LineIndex(text)

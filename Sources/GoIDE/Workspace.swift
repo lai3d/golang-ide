@@ -155,6 +155,7 @@ final class Workspace {
 
     @ObservationIgnored private var lsp: LSPClient?
     @ObservationIgnored private var lspReady = false
+    @ObservationIgnored private var semanticLegend: SemanticTokenLegend?
     @ObservationIgnored private var runProcess: Process?
     @ObservationIgnored private var watcher: DirectoryWatcher?
     @ObservationIgnored private var handledLaunchArguments = false
@@ -586,6 +587,16 @@ final class Workspace {
         return HoverContent.parse(result).map { String($0.prefix(4000)) }
     }
 
+    /// Semantic tokens for the whole document (decoded with the server's legend).
+    func semanticTokens(in document: Document) async -> [SemanticToken] {
+        guard lspReady, document.isGo, let lsp, let legend = semanticLegend,
+              let result = try? await lsp.request("textDocument/semanticTokens/full", params: [
+                  "textDocument": ["uri": .string(document.url.absoluteString)],
+              ])
+        else { return [] }
+        return legend.decode(result)
+    }
+
     /// Inlay hints for the whole document.
     func inlayHints(in document: Document) async -> [InlayHint] {
         guard lspReady, document.isGo, let lsp else { return [] }
@@ -828,7 +839,7 @@ final class Workspace {
         case "workspace/configuration":
             // Same settings as initializationOptions, so gopls keeps hints enabled.
             let items = params["items"]?.arrayValue ?? []
-            return .array(items.map { $0["section"]?.stringValue == "gopls" ? InlayHint.goplsSettings : .null })
+            return .array(items.map { $0["section"]?.stringValue == "gopls" ? GoplsSettings.default : .null })
         case "workspace/applyEdit":
             apply(WorkspaceEdit.parse(params["edit"] ?? .null))
             return ["applied": true]
@@ -1005,8 +1016,9 @@ final class Workspace {
             try client.start(executable: gopls, environment: ToolLocator.environment(), currentDirectory: root)
             lsp = client
             lspStatus = "gopls: starting…"
-            _ = try await client.request("initialize", params: Self.initializeParams(root: root))
+            let initialized = try await client.request("initialize", params: Self.initializeParams(root: root))
             guard lsp === client else { return }  // folder changed while initializing
+            semanticLegend = SemanticTokenLegend(initializeResult: initialized)
             try client.notify("initialized", params: [:])
             lspReady = true
             lspStatus = "gopls: ready"
@@ -1090,6 +1102,14 @@ final class Workspace {
             "definition": ["linkSupport": false],
             "documentHighlight": ["dynamicRegistration": false],
             "inlayHint": ["dynamicRegistration": false],
+            "semanticTokens": [
+                "requests": ["full": true, "range": false],
+                "formats": ["relative"],
+                "tokenTypes": .array(SemanticTokenLegend.clientTypes.map(JSONValue.string)),
+                "tokenModifiers": .array(SemanticTokenLegend.clientModifiers.map(JSONValue.string)),
+                "multilineTokenSupport": false,
+                "overlappingTokenSupport": false,
+            ],
             "rename": ["prepareSupport": true],
             "documentSymbol": ["hierarchicalDocumentSymbolSupport": true],
             "codeAction": [
@@ -1114,7 +1134,7 @@ final class Workspace {
             "processId": .int(Int(ProcessInfo.processInfo.processIdentifier)),
             "clientInfo": ["name": "GoIDE", "version": "0.1.0"],
             "rootUri": .string(root.absoluteString),
-            "initializationOptions": InlayHint.goplsSettings,
+            "initializationOptions": GoplsSettings.default,
             "workspaceFolders": [["uri": .string(root.absoluteString), "name": .string(root.lastPathComponent)]],
             "capabilities": [
                 "textDocument": textDocument,

@@ -320,8 +320,5 @@ public struct InlayHint: Sendable, Hashable {
     }
 
     /// gopls settings that turn the hints on (sent as initializationOptions).
-    public static let goplsSettings: JSONValue = ["hints": [
-        "assignVariableTypes": true, "compositeLiteralFields": true, "constantValues": true,
-        "functionTypeParameters": true, "parameterNames": true, "rangeVariableTypes": true,
-    ]]
+    public static var goplsSettings: JSONValue { GoplsSettings.default }
 }

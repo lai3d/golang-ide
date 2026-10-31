@@ -28,6 +28,20 @@ enum EditorTheme {
         [.font: font(settings), .foregroundColor: NSColor.textColor, .paragraphStyle: paragraphStyle(settings)]
     }
 
+    /// Colors for what only gopls knows (the regex lexer handles keywords, strings, …).
+    static func color(forSemantic type: String, modifiers: Set<String>) -> NSColor? {
+        switch type {
+        case "namespace": .secondaryLabelColor  // package qualifiers: fmt.Println
+        case "type", "typeParameter", "struct", "interface", "class", "enum": .systemTeal
+        case "parameter": .systemBrown
+        case "function" where modifiers.contains("defaultLibrary"): .systemPurple  // len, append, …
+        case "function", "method": .systemBlue
+        case "variable" where modifiers.contains("defaultLibrary"): .systemPurple  // nil, true, false
+        case "variable" where modifiers.contains("readonly"), "enumMember": .systemIndigo  // constants
+        default: nil
+        }
+    }
+
     // System colors adapt to light and dark mode automatically.
     static func color(for kind: GoTokenKind) -> NSColor {
         switch kind {
