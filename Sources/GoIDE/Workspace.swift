@@ -113,8 +113,31 @@ enum FileOperationError: LocalizedError {
 @MainActor
 @Observable
 final class Workspace {
-    /// The app's workspace (for debug hooks like --snapshot).
+    /// The workspace of the most recently focused window (Settings, debug hooks like --snapshot).
     static weak var current: Workspace?
+    /// Target for menu commands when no window is focused: has no folder, so they do nothing.
+    static let placeholder = Workspace()
+    private static let registry = NSHashTable<Workspace>.weakObjects()
+    private static var handledLaunchArguments = false
+
+    /// Workspaces of all open windows.
+    static var allOpen: [Workspace] { registry.allObjects }
+
+    static func register(_ workspace: Workspace) {
+        registry.add(workspace)
+        current = workspace
+    }
+
+    /// Releases a closing window's resources: gopls, Delve, the file watcher, running commands.
+    func shutdown() async {
+        Self.registry.remove(self)
+        if Self.current === self { Self.current = Self.allOpen.last }
+        stopDebugging()
+        runProcess?.terminate()
+        watcher?.stop()
+        watcher = nil
+        await stopLanguageServer()
+    }
 
     private(set) var rootURL: URL?
     private(set) var fileTree: [FileNode] = []
@@ -191,7 +214,6 @@ final class Workspace {
     @ObservationIgnored private var semanticLegend: SemanticTokenLegend?
     @ObservationIgnored private var runProcess: Process?
     @ObservationIgnored private var watcher: DirectoryWatcher?
-    @ObservationIgnored private var handledLaunchArguments = false
 
     var currentFile: URL? { activeDocument?.url }
     var isGoFile: Bool { activeDocument?.isGo ?? false }
@@ -230,8 +252,8 @@ final class Workspace {
 
     /// `GoIDE <folder> [file…]` opens the folder, then any listed files as tabs.
     func handleLaunchArguments() async {
-        guard !handledLaunchArguments else { return }
-        handledLaunchArguments = true
+        guard !Self.handledLaunchArguments else { return }  // only the first window
+        Self.handledLaunchArguments = true
         var folder: URL?
         var files: [URL] = []
         var args = CommandLine.arguments.dropFirst()[...]

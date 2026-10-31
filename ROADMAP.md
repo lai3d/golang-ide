@@ -59,7 +59,7 @@ Released so far: [v0.1.0](https://github.com/lai3d/golang-ide/releases/tag/v0.1.
 | 5.4 | ✅ Call hierarchy | Incoming / outgoing calls tree for the function at the caret | 0.5h |
 | 5.5 | ✅ Git status | Sidebar badges (M / A / ? / D), gutter change bars vs HEAD, branch in the toolbar | 0.7h |
 | 5.6 | ✅ Inline blame | Author, date and summary of the caret line's last commit, at the end of the line | 0.4h |
-| 5.7 | ⬜ Multiple windows | One project per window (File ▸ New Window, ⇧⌘N) | 0.8h |
+| 5.7 | ✅ Multiple windows | One project per window (File ▸ New Window, ⇧⌘N) | 0.8h |
 | 5.8 | ⬜ Code folding | `textDocument/foldingRange`; fold markers in the gutter, fold/unfold all | 1h |
 
 ## Later / ideas

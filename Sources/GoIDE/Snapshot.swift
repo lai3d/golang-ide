@@ -104,6 +104,30 @@ enum Snapshot {
                 if let first = workspace.callRoot?.children?.first { await workspace.expand(first) }
                 try? await Task.sleep(for: .milliseconds(500))
             }
+            if let folder = value("--snapshot-second-window") {
+                // File ▸ New Window, then open a folder in it.
+                if let fileMenu = NSApp.mainMenu?.items.first(where: { $0.title == "File" })?.submenu,
+                   let index = fileMenu.items.firstIndex(where: { $0.title == "New Window" }) {
+                    fileMenu.performActionForItem(at: index)
+                }
+                try? await Task.sleep(for: .milliseconds(800))
+                if let second = Workspace.current, second !== workspace {
+                    await second.openFolder(URL(fileURLWithPath: folder))
+                }
+                try? await Task.sleep(for: .seconds(3))
+                let windows = NSApp.windows.filter { $0.isVisible && $0.parent == nil && $0.contentView != nil }
+                print("windows: \(windows.map(\.title)) workspaces: \(Workspace.allOpen.compactMap { $0.rootURL?.lastPathComponent })")
+                if args.contains("--snapshot-close-second") {
+                    let target = windows.first { $0.title == URL(fileURLWithPath: folder).lastPathComponent }
+                    if let target, let delegate = target.delegate {
+                        print("delegate: \(type(of: delegate)) shouldClose: \(delegate.windowShouldClose?(target) ?? true) key: \(NSApp.keyWindow?.title ?? "nil")")
+                    }
+                    target?.performClose(nil)
+                    try? await Task.sleep(for: .seconds(1))
+                    let remaining = NSApp.windows.filter { $0.isVisible && $0.parent == nil && $0.contentView != nil }
+                    print("after close: \(remaining.map(\.title)) workspaces: \(Workspace.allOpen.compactMap { $0.rootURL?.lastPathComponent })")
+                }
+            }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()
                 try? await Task.sleep(for: .milliseconds(300))
@@ -124,7 +148,8 @@ enum Snapshot {
             let settingsWindow = args.contains("--snapshot-settings")
                 ? NSApp.windows.first { $0.isVisible && $0.parent == nil && $0 !== NSApp.windows.first }
                 : nil
-            if let window = settingsWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.parent == nil && $0.contentView != nil }),
+            let keyWindow = args.contains("--snapshot-second-window") ? NSApp.keyWindow : nil
+            if let window = settingsWindow ?? keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.parent == nil && $0.contentView != nil }),
                let image = render(window) {
                 try? image.write(to: URL(fileURLWithPath: path))
                 print("snapshot written to \(path)")

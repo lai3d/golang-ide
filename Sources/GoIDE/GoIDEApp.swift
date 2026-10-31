@@ -3,11 +3,12 @@ import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    weak var workspace: Workspace?
-
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let workspace, !workspace.dirtyDocuments.isEmpty else { return .terminateNow }
-        return workspace.resolveUnsaved(workspace.dirtyDocuments) ? .terminateNow : .terminateCancel
+        // Ask per window, so each prompt names that project's files.
+        for workspace in Workspace.allOpen where !workspace.dirtyDocuments.isEmpty {
+            guard workspace.resolveUnsaved(workspace.dirtyDocuments) else { return .terminateCancel }
+        }
+        return .terminateNow
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -22,34 +23,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
-        workspace?.stopDebugging()  // ends dlv and the debuggee
+        Workspace.allOpen.forEach { $0.stopDebugging() }  // ends dlv and the debuggees
+    }
+}
+
+/// The focused window's workspace, for menu commands.
+struct FocusedWorkspaceKey: FocusedValueKey {
+    typealias Value = Workspace
+}
+
+extension FocusedValues {
+    var workspace: Workspace? {
+        get { self[FocusedWorkspaceKey.self] }
+        set { self[FocusedWorkspaceKey.self] = newValue }
+    }
+}
+
+/// One window = one project (its own documents, gopls, debugger).
+struct WorkspaceWindow: View {
+    @State private var workspace = Workspace()
+
+    var body: some View {
+        ContentView()
+            .environment(workspace)
+            .focusedSceneValue(\.workspace, workspace)
+            .frame(minWidth: 900, minHeight: 600)
+            .background(WindowCloseGuardView(workspace: workspace))
+            .onAppear { Workspace.register(workspace) }
     }
 }
 
 @main
 struct GoIDEApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var workspace = Workspace()
+
+    var body: some Scene {
+        WindowGroup("GoIDE", id: "workspace") {
+            WorkspaceWindow()
+        }
+        .commands { GoIDECommands() }
+        Settings {
+            SettingsView().environment(Workspace.current ?? Workspace.placeholder)
+        }
+    }
+}
+
+/// Menu commands; they act on the focused window's workspace.
+struct GoIDECommands: Commands {
+    @FocusedValue(\.workspace) private var focused: Workspace?
+    @Environment(\.openWindow) private var openWindow
     @AppStorage("formatOnSave") private var formatOnSave = true
+
+    /// Without a focused window, commands target an empty workspace (and are disabled or no-ops).
+    private var workspace: Workspace { focused ?? Workspace.placeholder }
 
     private static func functionKey(_ key: Int) -> KeyEquivalent {
         KeyEquivalent(Character(UnicodeScalar(UInt32(key))!))
     }
 
-    var body: some Scene {
-        WindowGroup("GoIDE") {
-            ContentView()
-                .environment(workspace)
-                .onAppear {
-                    appDelegate.workspace = workspace
-                    Workspace.current = workspace
-                }
-                .frame(minWidth: 900, minHeight: 600)
-        }
-        .commands {
+    var body: some Commands {
             CommandGroup(replacing: .newItem) {
-                Button("Open Folder…") { workspace.presentOpenPanel() }
-                    .keyboardShortcut("o")
+                Button("New Window") { openWindow(id: "workspace") }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
+                Button("Open Folder…") {
+                    if let focused { focused.presentOpenPanel() } else { openWindow(id: "workspace") }
+                }
+                .keyboardShortcut("o")
             }
             CommandGroup(replacing: .printItem) {
                 Button("Open Quickly…") { workspace.showQuickOpen() }
@@ -168,9 +207,5 @@ struct GoIDEApp: App {
                 Divider()
                 Button("Restart gopls") { Task { await workspace.restartLanguageServer() } }
             }
-        }
-        Settings {
-            SettingsView().environment(workspace)
-        }
-    }
+            }
 }
