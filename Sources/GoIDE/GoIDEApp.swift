@@ -58,6 +58,10 @@ struct GoIDEApp: App {
                 Button("Save All") { Task { await workspace.saveAllFormatted() } }
                     .keyboardShortcut("s", modifiers: [.command, .option])
             }
+            CommandGroup(after: .textEditing) {
+                Button("Find in Project…") { workspace.showSearch() }
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+            }
             CommandMenu("Navigate") {
                 Button("Jump to Definition") {
                     guard let document = workspace.activeDocument else { return }

@@ -6,8 +6,8 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            FileTreeView()
-                .navigationSplitViewColumnWidth(min: 180, ideal: 240)
+            Sidebar()
+                .navigationSplitViewColumnWidth(min: 200, ideal: 260)
         } detail: {
             if workspace.rootURL == nil {
                 WelcomeView()
@@ -57,6 +57,28 @@ struct WelcomeView: View {
                 .controlSize(.large)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct Sidebar: View {
+    @Environment(Workspace.self) private var workspace
+
+    var body: some View {
+        @Bindable var workspace = workspace
+        VStack(spacing: 0) {
+            Picker("Sidebar", selection: $workspace.sidebarMode) {
+                Image(systemName: "folder").help("Files").tag(SidebarMode.files)
+                Image(systemName: "magnifyingglass").help("Find in Project (⇧⌘F)").tag(SidebarMode.search)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            switch workspace.sidebarMode {
+            case .files: FileTreeView()
+            case .search: SearchView()
+            }
+        }
     }
 }
 

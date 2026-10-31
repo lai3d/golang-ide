@@ -6,10 +6,15 @@ enum BottomTab: Hashable {
     case problems, output
 }
 
-/// A request for an editor to move the caret to a position.
+enum SidebarMode: Hashable {
+    case files, search
+}
+
+/// A request for an editor to move the caret to a position (and optionally select).
 struct RevealTarget: Equatable {
     let id = UUID()
     let position: TextPosition
+    var length = 0
 }
 
 struct NavigationPoint: Equatable {
@@ -83,6 +88,17 @@ final class Workspace {
     private(set) var isRunning = false
     private(set) var backStack: [NavigationPoint] = []
     var bottomTab: BottomTab = .problems
+    var sidebarMode: SidebarMode = .files
+
+    // Find in project
+    var searchQuery = ""
+    var searchOptions = SearchOptions()
+    private(set) var searchResults: [SearchFileResult] = []
+    private(set) var isSearching = false
+    private(set) var searchError: String?
+    /// Bumped to ask the search field to take focus.
+    private(set) var searchFocusRequest = 0
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
     var formatOnSave = UserDefaults.standard.object(forKey: "formatOnSave") as? Bool ?? true {
         didSet { UserDefaults.standard.set(formatOnSave, forKey: "formatOnSave") }
     }
@@ -163,6 +179,7 @@ final class Workspace {
         diagnostics = [:]
         output = ""
         backStack = []
+        searchResults = []
         if openDefaultFile, let file = Self.defaultFile(in: fileTree) {
             openFile(file)
         }
@@ -539,9 +556,59 @@ final class Workspace {
         navigate(to: point.url, position: point.position)
     }
 
-    func navigate(to url: URL, position: TextPosition) {
+    func navigate(to url: URL, position: TextPosition, selectingLength length: Int = 0) {
         guard let document = openFile(url) else { return }
-        document.revealTarget = RevealTarget(position: position)
+        document.revealTarget = RevealTarget(position: position, length: length)
+    }
+
+    // MARK: - Find in project
+
+    func showSearch() {
+        sidebarMode = .search
+        searchFocusRequest += 1
+    }
+
+    var searchMatchCount: Int { searchResults.reduce(0) { $0 + $1.matches.count } }
+
+    /// Debounced search, for typing in the search field.
+    func scheduleSearch() {
+        searchTask?.cancel()
+        searchTask = Task {
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            await performSearch()
+        }
+    }
+
+    func performSearch() async {
+        let query = searchQuery
+        guard let root = rootURL, !query.isEmpty else {
+            searchResults = []
+            searchError = nil
+            isSearching = false
+            return
+        }
+        let options = searchOptions
+        // Unsaved buffers are searched instead of their files on disk.
+        let overrides = Dictionary(dirtyDocuments.map { (Self.key(for: $0.url), $0.text) }, uniquingKeysWith: { $1 })
+        isSearching = true
+        let (results, error) = await Task.detached(priority: .userInitiated) { () -> ([SearchFileResult], String?) in
+            do {
+                return (try ProjectSearch.search(root: root, query: query, options: options, overrides: overrides), nil)
+            } catch {
+                return ([], error.localizedDescription)
+            }
+        }.value
+        guard query == searchQuery, options == searchOptions else { return }  // superseded
+        searchResults = results
+        searchError = error
+        isSearching = false
+    }
+
+    func open(_ match: SearchMatch, in file: SearchFileResult) {
+        navigate(to: URL(fileURLWithPath: file.path),
+                 position: TextPosition(line: match.line, character: match.column),
+                 selectingLength: match.length)
     }
 
     private func positionRequest(_ document: Document, at offset: Int) -> (LSPClient, JSONValue)? {

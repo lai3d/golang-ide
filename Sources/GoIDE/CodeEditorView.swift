@@ -97,6 +97,7 @@ struct CodeEditorView: NSViewRepresentable {
         if coordinator.isActive != isActive {
             scrollView.isHidden = !isActive
             if isActive {
+                scrollView.tile()
                 if let window = textView.window {
                     window.makeFirstResponder(textView)
                     coordinator.isActive = true
@@ -116,14 +117,7 @@ struct CodeEditorView: NSViewRepresentable {
 
         if let reveal, reveal.id != coordinator.lastRevealID {
             coordinator.lastRevealID = reveal.id
-            let index = LineIndex(textView.string)
-            let location = index.offset(of: reveal.position)
-            let word = GoIdentifier.wordRange(in: textView.string as NSString, at: location)
-                ?? NSRange(location: location, length: 0)
-            textView.setSelectedRange(NSRange(location: location, length: 0))
-            textView.scrollRangeToVisible(word)
-            textView.window?.makeFirstResponder(textView)
-            if word.length > 0 { textView.showFindIndicator(for: word) }
+            coordinator.performReveal(reveal, in: scrollView)
         }
     }
 
@@ -399,6 +393,63 @@ struct CodeEditorView: NSViewRepresentable {
             popover.contentViewController = host
             popover.show(relativeTo: viewRect, of: textView, preferredEdge: .minY)
             hoverPopover = popover
+        }
+
+        /// Selects the target and scrolls to it once the view has a real size
+        /// (a freshly created editor is still zero-sized during its first update).
+        func performReveal(_ reveal: RevealTarget, in scrollView: NSScrollView, attempt: Int = 0) {
+            guard let textView else { return }
+            guard textView.window != nil, scrollView.contentView.bounds.width > 0 else {
+                if attempt < 20 {
+                    DispatchQueue.main.async { [weak self, weak scrollView] in
+                        guard let self, let scrollView else { return }
+                        self.performReveal(reveal, in: scrollView, attempt: attempt + 1)
+                    }
+                }
+                return
+            }
+            scrollView.tile()  // lay out ruler + clip view before measuring
+            let text = textView.string as NSString
+            let location = LineIndex(textView.string).offset(of: reveal.position)
+            let length = max(0, min(reveal.length, text.length - location))
+            let highlight = length > 0
+                ? NSRange(location: location, length: length)
+                : GoIdentifier.wordRange(in: text, at: location) ?? NSRange(location: location, length: 0)
+            textView.window?.makeFirstResponder(textView)
+            textView.setSelectedRange(NSRange(location: location, length: length))
+            scrollToReveal(highlight, in: scrollView)
+        }
+
+        /// Puts `range` about a third of the way down, and avoids horizontal scrolling
+        /// when the line start is visible anyway.
+        func scrollToReveal(_ range: NSRange, in scrollView: NSScrollView) {
+            guard let textView, let layoutManager = textView.layoutManager,
+                  let container = textView.textContainer else { return }
+            layoutManager.ensureLayout(for: container)  // the view may have just been unhidden
+            let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            var rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
+            rect.origin.x += textView.textContainerOrigin.x
+            rect.origin.y += textView.textContainerOrigin.y
+
+            // The clip view extends under the line-number ruler; its content insets mark the
+            // usable area, so "scrolled fully left" is x = -insets.left, not 0.
+            let clip = scrollView.contentView
+            let insets = clip.contentInsets
+            let visible = clip.bounds
+            let usableWidth = visible.width - insets.left - insets.right
+            let usableHeight = visible.height - insets.top - insets.bottom
+            var origin = visible.origin
+            let visibleTop = visible.minY + insets.top
+            if rect.minY < visibleTop || rect.maxY > visibleTop + usableHeight {
+                origin.y = rect.midY - usableHeight / 3 - insets.top
+            }
+            origin.x = rect.maxX + 20 < usableWidth
+                ? -insets.left
+                : rect.maxX - usableWidth + 40 - insets.left
+            let maxY = max(-insets.top, textView.frame.height - visible.height + insets.bottom)
+            origin.y = min(max(-insets.top, origin.y), maxY)
+            clip.scroll(to: origin)
+            scrollView.reflectScrolledClipView(clip)
         }
 
         // MARK: Definition & misc

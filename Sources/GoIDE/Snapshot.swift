@@ -12,6 +12,15 @@ enum Snapshot {
         if let d = args.firstIndex(of: "--snapshot-delay"), d + 1 < args.count, let v = Double(args[d + 1]) { delay = v }
         Task {
             try? await Task.sleep(for: .seconds(delay))
+            if let q = args.firstIndex(of: "--snapshot-search"), q + 1 < args.count, let workspace = Workspace.current {
+                workspace.showSearch()
+                workspace.searchQuery = args[q + 1]
+                await workspace.performSearch()
+                if let file = workspace.searchResults.first, let match = file.matches.first {
+                    workspace.open(match, in: file)
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
             if args.contains("--snapshot-format"), let workspace = Workspace.current {
                 await workspace.formatActiveDocument()
                 try? await Task.sleep(for: .milliseconds(300))

@@ -152,3 +152,38 @@ import GoIDECore
         #expect(Workspace.packageName(for: dir) == "main")
     }
 }
+
+@MainActor
+@Suite struct WorkspaceSearchTests {
+    @Test func searchesProjectIncludingUnsavedBuffers() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-ws-search-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.canonicalFileURL
+        try "package main\n\nfunc main() { greet() }\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+        try "package main\n\nfunc greet() {}\n".write(to: dir.appendingPathComponent("greet.go"), atomically: true, encoding: .utf8)
+
+        let workspace = Workspace()
+        await workspace.openFolder(dir)
+        workspace.searchQuery = "greet"
+        await workspace.performSearch()
+        #expect(workspace.searchMatchCount == 2)
+
+        // Edit greet.go without saving: the search sees the buffer.
+        let greet = try #require(workspace.openFile(dir.appendingPathComponent("greet.go")))
+        workspace.updateText(of: greet, to: "package main\n\nfunc greet() {}\nfunc greetAgain() {}\n")
+        await workspace.performSearch()
+        #expect(workspace.searchMatchCount == 3)
+
+        let file = try #require(workspace.searchResults.first { $0.path.hasSuffix("main.go") })
+        workspace.open(file.matches[0], in: file)
+        #expect(workspace.activeDocument?.name == "main.go")
+        #expect(workspace.activeDocument?.revealTarget?.position == TextPosition(line: 2, character: 14))
+        #expect(workspace.activeDocument?.revealTarget?.length == 5)
+
+        workspace.searchOptions.regex = true
+        workspace.searchQuery = "("
+        await workspace.performSearch()
+        #expect(workspace.searchError != nil && workspace.searchResults.isEmpty)
+    }
+}
