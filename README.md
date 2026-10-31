@@ -22,6 +22,7 @@ A native macOS IDE for Go, written in Swift (SwiftUI + AppKit).
 - Open Quickly (⌘P / ⇧⌘O): fuzzy file finder + workspace symbols; Outline sidebar for the current file
 - Git: status badges in the sidebar, branch in the title bar, inline blame for the caret line
 - Multiple windows, one project each (⇧⌘N)
+- Integrated terminal (⌃`) running your login shell in the project folder
 
 **Language (gopls)**
 - Live diagnostics: underlines, gutter dots, Problems panel
@@ -74,6 +75,11 @@ You can also open `Package.swift` in Xcode.
 | `scripts/` | `bundle.sh` (app bundle), `make-icon.swift` (regenerates `Resources/AppIcon.icns`) |
 | `.github/workflows/` | CI (build, test, bundle) and tagged releases (`v*` → GitHub Release) |
 
+
+## Dependencies
+
+- [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) 1.11.2 (MIT) — terminal emulation for the Terminal panel.
+  Pinned before 1.12, whose Metal renderer needs Xcode's separately downloaded Metal toolchain.
 
 ## License
 

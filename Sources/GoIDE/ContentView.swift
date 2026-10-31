@@ -465,6 +465,7 @@ struct BottomPanel: View {
                     Text("Calls").tag(BottomTab.calls)
                     Text(testsLabel).tag(BottomTab.tests)
                     Text("Debug").tag(BottomTab.debug)
+                    Text("Terminal").tag(BottomTab.terminal)
                     Text("Output").tag(BottomTab.output)
                 }
                 .pickerStyle(.segmented)
@@ -487,6 +488,7 @@ struct BottomPanel: View {
             case .calls: CallsPanel()
             case .tests: TestsPanel()
             case .debug: DebugPanel()
+            case .terminal: TerminalPanel()
             case .output: OutputView()
             }
         }

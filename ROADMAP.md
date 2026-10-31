@@ -71,7 +71,7 @@ Released so far: [v0.1.0](https://github.com/lai3d/golang-ide/releases/tag/v0.1.
 | 6.3 | ✅ Diff vs HEAD | Side-by-side diff of the current file against HEAD | 0.6h |
 | 6.4 | ✅ Source control panel | Changed files, stage / unstage / discard, commit message + commit | 0.8h |
 | 6.5 | ✅ Debugger extras | Conditional breakpoints, hover to evaluate while paused, watch expressions | 0.7h |
-| 6.6 | ⏸ Integrated terminal | Shell in a bottom-panel tab (PTY). Waiting on a decision: SwiftTerm dependency vs a minimal built-in terminal | 0.8h |
+| 6.6 | ✅ Integrated terminal | SwiftTerm (PTY + xterm emulation): login shell in the project folder, ⌃`, survives tab switches, restart on exit | 0.8h |
 | 6.7 | ✅ Go module tools | Go menu: vet (⌃⌥⌘V), generate, Modules ▸ tidy / update / download / verify; clickable `file.go:N` in Output | 0.3h |
 
 ## Later / ideas

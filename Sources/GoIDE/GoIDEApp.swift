@@ -14,9 +14,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Writing to a dead language server's stdin must not kill the app.
         signal(SIGPIPE, SIG_IGN)
-        // Needed when launched as a bare SwiftPM executable (no .app bundle).
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        if CommandLine.arguments.contains("--snapshot") {
+            // Debug snapshots render off-screen: never take keyboard focus from the user's app.
+            NSApp.setActivationPolicy(.accessory)
+        } else {
+            // Needed when launched as a bare SwiftPM executable (no .app bundle).
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+        }
         Snapshot.scheduleIfRequested()
     }
 
@@ -229,6 +234,9 @@ struct GoIDECommands: Commands {
                     .keyboardShortcut("u", modifiers: [.control, .command])
                 Button("Run Test at Cursor") { workspace.runTestAtCaret() }
                     .keyboardShortcut("u", modifiers: [.control, .option, .command])
+                Divider()
+                Button("Terminal") { workspace.showTerminal() }
+                    .keyboardShortcut("`", modifiers: .control)
                 Divider()
                 Button("Vet (go vet ./...)") { workspace.runGo(["vet", "./..."]) }
                     .keyboardShortcut("v", modifiers: [.control, .option, .command])

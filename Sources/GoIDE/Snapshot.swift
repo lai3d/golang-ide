@@ -164,6 +164,12 @@ enum Snapshot {
                 for _ in 0..<100 where workspace.isRunning { try? await Task.sleep(for: .milliseconds(100)) }
                 try? await Task.sleep(for: .milliseconds(300))
             }
+            if let input = value("--snapshot-terminal"), let workspace {
+                workspace.showTerminal()
+                try? await Task.sleep(for: .seconds(2))  // shell startup
+                workspace.terminal?.send(input + "\n")
+                try? await Task.sleep(for: .seconds(2))
+            }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()
                 try? await Task.sleep(for: .milliseconds(300))
@@ -200,6 +206,15 @@ enum Snapshot {
         }
     }
 
+    private static func layerRenderedViews(in view: NSView) -> [NSView] {
+        var found: [NSView] = []
+        for subview in view.subviews {
+            if String(describing: type(of: subview)).contains("TerminalView") { found.append(subview) }
+            found += layerRenderedViews(in: subview)
+        }
+        return found
+    }
+
     /// The window's frame view plus any visible child windows (completion, signature
     /// popups) composited at their on-screen offsets, as PNG data.
     private static func render(_ window: NSWindow) -> Data? {
@@ -210,6 +225,22 @@ enum Snapshot {
         let image = NSImage(size: root.bounds.size)
         image.lockFocus()
         base.draw(in: root.bounds)
+        // Layer-rendered views (the SwiftTerm terminal) don't show up in cacheDisplay: draw their layers.
+        if let context = NSGraphicsContext.current?.cgContext {
+            for view in layerRenderedViews(in: root) {
+                guard let layer = view.layer, !view.isHiddenOrHasHiddenAncestor else { continue }
+                let frame = view.convert(view.bounds, to: root)
+                context.saveGState()
+                // root is flipped (window frame view); CG context is not.
+                context.translateBy(x: frame.minX, y: root.isFlipped ? root.bounds.height - frame.maxY : frame.minY)
+                if view.isFlipped {
+                    context.translateBy(x: 0, y: frame.height)
+                    context.scaleBy(x: 1, y: -1)
+                }
+                layer.render(in: context)
+                context.restoreGState()
+            }
+        }
         for child in window.childWindows ?? [] where child.isVisible {
             guard let view = child.contentView,
                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }

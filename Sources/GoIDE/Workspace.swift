@@ -3,7 +3,7 @@ import GoIDECore
 import Observation
 
 enum BottomTab: Hashable {
-    case problems, references, calls, tests, debug, output
+    case problems, references, calls, tests, debug, output, terminal
 }
 
 enum FoldAction: Hashable {
@@ -143,6 +143,7 @@ final class Workspace {
         Self.registry.remove(self)
         if Self.current === self { Self.current = Self.allOpen.last }
         stopDebugging()
+        terminal?.terminate()
         runProcess?.terminate()
         watcher?.stop()
         watcher = nil
@@ -226,6 +227,16 @@ final class Workspace {
     var isGitRepository: Bool { gitTopLevel != nil }
     @ObservationIgnored private var gitTask: Task<Void, Never>?
     private(set) var gitTopLevel: URL?
+
+    /// The integrated terminal (kept alive while the window is open).
+    private(set) var terminal: TerminalSession?
+
+    func showTerminal() {
+        if terminal == nil {
+            terminal = TerminalSession(directory: rootURL ?? FileManager.default.homeDirectoryForCurrentUser)
+        }
+        bottomTab = .terminal
+    }
 
     // Call hierarchy
     private(set) var callRoot: CallNode?
