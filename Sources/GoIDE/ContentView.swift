@@ -480,6 +480,7 @@ struct BottomPanel: View {
                     Text("Calls").tag(BottomTab.calls)
                     Text(testsLabel).tag(BottomTab.tests)
                     Text("Debug").tag(BottomTab.debug)
+                    Text("Profile").tag(BottomTab.profile)
                     Text("Terminal").tag(BottomTab.terminal)
                     Text("Output").tag(BottomTab.output)
                 }
@@ -503,6 +504,7 @@ struct BottomPanel: View {
             case .calls: CallsPanel()
             case .tests: TestsPanel()
             case .debug: DebugPanel()
+            case .profile: ProfilePanel()
             case .terminal: TerminalPanel()
             case .output: OutputView()
             }

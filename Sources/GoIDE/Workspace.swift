@@ -3,7 +3,7 @@ import GoIDECore
 import Observation
 
 enum BottomTab: Hashable {
-    case problems, references, calls, tests, debug, output, terminal
+    case problems, references, calls, tests, debug, profile, output, terminal
 }
 
 enum EditAction: Hashable {
@@ -162,6 +162,7 @@ final class Workspace {
         stopDebugging()
         terminal?.terminate()
         runProcess?.terminate()
+        discardProfile()
         watcher?.stop()
         watcher = nil
         await stopLanguageServer()
@@ -191,6 +192,10 @@ final class Workspace {
     var isCheckingModuleUpdates = false
     var moduleUpdatesError: String?
     @ObservationIgnored var checkedModuleUpdatesRoot: URL?
+
+    // Profiling; see Workspace+Profiling.swift
+    var profile: ProfileSession?
+    @ObservationIgnored var pprofWebProcess: Process?
 
     // Find in project
     var searchQuery = ""
@@ -1459,7 +1464,7 @@ final class Workspace {
         return (lsp, ["textDocument": ["uri": .string(document.url.absoluteString)], "position": position.json])
     }
 
-    private func flashStatus(_ message: String) {
+    func flashStatus(_ message: String) {
         let previous = lspStatus
         lspStatus = message
         Task {

@@ -275,6 +275,18 @@ struct GoIDECommands: Commands {
                     .keyboardShortcut("u", modifiers: [.control, .shift, .command])
                 Button(workspace.showCoverage ? "Hide Coverage" : "Show Coverage") { workspace.showCoverage.toggle() }
                     .disabled(workspace.coverage == nil)
+                Menu("Profile") {
+                    Button("CPU Profile Benchmarks") { workspace.profilePackage(.cpu, benchmarks: true) }
+                        .keyboardShortcut("p", modifiers: [.control, .option, .command])
+                    Button("Memory Profile Benchmarks") { workspace.profilePackage(.memory, benchmarks: true) }
+                    Divider()
+                    Button("CPU Profile Tests") { workspace.profilePackage(.cpu, benchmarks: false) }
+                    Button("Memory Profile Tests") { workspace.profilePackage(.memory, benchmarks: false) }
+                    Divider()
+                    Button("Open Profile in Browser") { workspace.openProfileInBrowser() }
+                        .disabled(workspace.profile?.isLoading != false || workspace.profile?.error != nil)
+                }
+                .disabled(workspace.rootURL == nil || workspace.isRunning)
                 Divider()
                 Button("Terminal") { workspace.showTerminal() }
                     .keyboardShortcut("`", modifiers: .control)

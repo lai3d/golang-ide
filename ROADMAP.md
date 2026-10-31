@@ -93,7 +93,7 @@ Released in [v0.3.0](https://github.com/lai3d/golang-ide/releases/tag/v0.3.0) (p
 |---|---|---|---|
 | 8.1 | ✅ Dependencies sidebar | `go.mod` requires (direct / indirect, replaces), available updates (`go list -m -u`), upgrade one / all direct, tidy, jump to the `require` line | 0.8h |
 | 8.2 | ✅ go.work workspaces | Modules of `go.work` (or nested `go.mod`s) grouped in the sidebar; create `go.work`, add a module (`go work use`), `go work sync` | 0.5h |
-| 8.3 | ⬜ Profiling | Go ▸ Profile CPU / Memory (benchmarks or tests of the current package): pprof top table (functions / lines, flat & cum), click to source, open the pprof web UI | 0.8h |
+| 8.3 | ✅ Profiling | Go ▸ Profile CPU / Memory (benchmarks or tests of the current package): pprof top table (functions / lines, flat & cum), click to source, open the pprof web UI | 0.8h |
 | 8.4 | ⬜ Refactor menu | Extract Function / Method / Variable / Constant and Inline Call from the selection (gopls code actions), in the menu bar and context menu | 0.4h |
 | 8.5 | ⬜ Rename preview | Preview… in the rename dialog: every changed line per file, before → after, then apply or cancel | 0.5h |
 | 8.6 | ⬜ gopls settings | Settings ▸ Go: gofumpt, local import prefix, staticcheck, extra analyzers; pushed live via `workspace/didChangeConfiguration` | 0.4h |

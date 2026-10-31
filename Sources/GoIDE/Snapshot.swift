@@ -99,6 +99,12 @@ enum Snapshot {
                 }
                 try? await Task.sleep(for: .milliseconds(500))
             }
+            if let kind = value("--snapshot-profile"), let workspace {
+                workspace.profilePackage(kind == "memory" ? .memory : .cpu, benchmarks: true)
+                for _ in 0..<600 where workspace.profile?.isLoading != false { try? await Task.sleep(for: .milliseconds(100)) }
+                workspace.bottomTab = .profile
+                try? await Task.sleep(for: .milliseconds(500))
+            }
             if args.contains("--snapshot-outline"), let workspace {
                 workspace.sidebarMode = .outline
                 try? await Task.sleep(for: .milliseconds(1200))
