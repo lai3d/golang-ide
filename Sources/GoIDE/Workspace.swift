@@ -3,7 +3,7 @@ import GoIDECore
 import Observation
 
 enum BottomTab: Hashable {
-    case problems, references, tests, output
+    case problems, references, tests, debug, output
 }
 
 enum TestScope: Equatable {
@@ -138,6 +138,12 @@ final class Workspace {
     var testStatuses: [String: GoTestResult.Status] {
         Dictionary(testReport.tests.compactMap { t in t.name.map { ($0, t.status) } }, uniquingKeysWith: { $1 })
     }
+
+    // Debugging
+    /// Breakpoints: canonical file path → one-based lines.
+    private(set) var breakpoints: [String: Set<Int>] = [:]
+    private(set) var debugSession: DebugSession?
+    private(set) var executionLocation: ExecutionLocation?
 
     // Find references
     private(set) var referenceResults: [SearchFileResult] = []
@@ -1215,6 +1221,108 @@ final class Workspace {
         navigate(to: URL(fileURLWithPath: path), position: TextPosition(line: max(line - 1, 0), character: 0))
     }
 
+    // MARK: - Debugging
+
+    /// Zero-based breakpoint lines for a document (for the gutter).
+    func breakpointLines(for document: Document) -> Set<Int> {
+        Set((breakpoints[Self.key(for: document.url)] ?? []).map { $0 - 1 })
+    }
+
+    /// Zero-based execution line if the debuggee is paused in this document.
+    func executionLine(for document: Document) -> Int? {
+        guard let location = executionLocation, location.path == Self.key(for: document.url) else { return nil }
+        return location.line - 1
+    }
+
+    func toggleBreakpoint(in document: Document, line: Int) {
+        let key = Self.key(for: document.url)
+        var lines = breakpoints[key] ?? []
+        if lines.contains(line + 1) { lines.remove(line + 1) } else { lines.insert(line + 1) }
+        breakpoints[key] = lines.isEmpty ? nil : lines
+        if let session = debugSession, session.isActive {
+            Task { await session.setBreakpoints(path: key, lines: lines) }
+        }
+    }
+
+    func toggleBreakpointAtCaret() {
+        guard let document = activeDocument, document.isGo else { return }
+        toggleBreakpoint(in: document, line: LineIndex(document.text).position(of: document.caretOffset).line)
+    }
+
+    func clearBreakpoints() {
+        let paths = breakpoints.keys
+        breakpoints = [:]
+        if let session = debugSession, session.isActive {
+            Task { for path in paths { await session.setBreakpoints(path: path, lines: []) } }
+        }
+    }
+
+    /// Debugs the test at the caret (in a _test.go file), else the active file's package (or the root).
+    func startDebugging() {
+        guard let rootURL else { return }
+        if let document = activeDocument, document.name.hasSuffix("_test.go"),
+           let name = GoTestFinder.enclosingTest(in: document.text, at: document.caretOffset) {
+            debug(test: name, in: document.url.deletingLastPathComponent())
+        } else if let document = activeDocument, document.isGo, !document.name.hasSuffix("_test.go") {
+            debug(package: document.url.deletingLastPathComponent())
+        } else {
+            debug(package: rootURL)
+        }
+    }
+
+    func debug(package dir: URL) {
+        launchDebugger(title: packagePattern(for: dir), directory: dir, launch: [
+            "request": "launch", "mode": "debug", "program": .string(Self.key(for: dir)),
+            "cwd": .string(Self.key(for: dir)), "outputMode": "remote",
+        ])
+    }
+
+    func debug(test name: String, in dir: URL) {
+        launchDebugger(title: name, directory: dir, launch: [
+            "request": "launch", "mode": "test", "program": .string(Self.key(for: dir)),
+            "cwd": .string(Self.key(for: dir)), "outputMode": "remote",
+            "args": ["-test.run", .string("^\(NSRegularExpression.escapedPattern(for: name))$"), "-test.v"],
+        ])
+    }
+
+    private func launchDebugger(title: String, directory: URL, launch: JSONValue) {
+        guard rootURL != nil else { return }
+        // Build the debug binary outside the project (Delve defaults to the package folder).
+        var launch = launch
+        if case .object(var config) = launch {
+            config["output"] = .string(FileManager.default.temporaryDirectory
+                .appendingPathComponent("goide-debug-\(UUID().uuidString)").path)
+            launch = .object(config)
+        }
+        if let session = debugSession, session.isActive { return }
+        guard let dlv = ToolLocator.find("dlv") else {
+            output = "dlv not found. Install it with:\n  go install github.com/go-delve/delve/cmd/dlv@latest\n"
+            bottomTab = .output
+            return
+        }
+        saveAll()
+        let session = DebugSession(title: title)
+        session.onLocation = { [weak self] location in
+            guard let self else { return }
+            executionLocation = location
+            if let location {
+                navigate(to: URL(fileURLWithPath: location.path), position: TextPosition(line: location.line - 1, character: 0))
+            }
+        }
+        session.onOutput = { [weak self] text in self?.appendOutput(text) }
+        debugSession = session
+        output = "Debugging \(title)…\n"
+        bottomTab = .debug
+        Task { await session.start(dlv: dlv, directory: directory, launch: launch, breakpoints: breakpoints) }
+    }
+
+    func stopDebugging() {
+        debugSession?.stop()
+        executionLocation = nil
+    }
+
+    var isDebugging: Bool { debugSession?.isActive ?? false }
+
     // MARK: - go run / build / test
 
     func runGo(_ arguments: [String]) {
@@ -1266,6 +1374,7 @@ final class Workspace {
     }
 
     func stopRun() {
+        if isDebugging { return stopDebugging() }
         runProcess?.interrupt()
     }
 

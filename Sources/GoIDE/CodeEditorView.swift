@@ -13,6 +13,7 @@ struct EditorServices {
     var codeActions: @MainActor (_ offset: Int, _ length: Int) async -> [CodeAction]
     var performAction: @MainActor (CodeAction) -> Void
     var runTest: @MainActor (String) -> Void
+    var toggleBreakpoint: @MainActor (Int) -> Void
     var caretMoved: @MainActor (Int) -> Void
 }
 
@@ -23,6 +24,8 @@ struct CodeEditorView: NSViewRepresentable {
     var highlightGo: Bool
     var isTestFile = false
     var testStatuses: [String: GoTestResult.Status] = [:]
+    var breakpoints: Set<Int> = []
+    var executionLine: Int?
     var isEditable: Bool
     var isActive: Bool
     var diagnostics: [Diagnostic]
@@ -87,6 +90,7 @@ struct CodeEditorView: NSViewRepresentable {
 
         let ruler = LineNumberRulerView(textView: textView)
         ruler.onRunTest = { [weak coordinator] name in coordinator?.parent.services.runTest(name) }
+        ruler.onToggleBreakpoint = { [weak coordinator] line in coordinator?.parent.services.toggleBreakpoint(line) }
         let container = EditorContainerView(scrollView: scrollView, gutter: ruler)
 
         coordinator.textView = textView
@@ -125,6 +129,11 @@ struct CodeEditorView: NSViewRepresentable {
             coordinator.applyStyling()
         }
         coordinator.updateTestMarkers()
+        if let ruler = coordinator.ruler {
+            if ruler.breakpoints != breakpoints { ruler.breakpoints = breakpoints }
+            if ruler.executionLine != executionLine { ruler.executionLine = executionLine }
+        }
+        if textView.executionLine != executionLine { textView.executionLine = executionLine }
 
         if quickFixRequest != coordinator.lastQuickFixRequest {
             coordinator.lastQuickFixRequest = quickFixRequest
@@ -653,6 +662,10 @@ final class CodeTextView: NSTextView {
     var onCommandClick: ((Int) -> Void)?
     var contextItems: ((Int) -> [NSMenuItem])?
     private var hoverArea: NSTrackingArea?
+    /// Zero-based line where the debugger is paused (highlighted).
+    var executionLine: Int? {
+        didSet { if executionLine != oldValue { needsDisplay = true } }
+    }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
@@ -682,9 +695,13 @@ final class CodeTextView: NSTextView {
         needsDisplay = true  // move the current-line highlight
     }
 
-    /// Subtle highlight behind the caret's line.
+    /// Subtle highlight behind the caret's line; green behind the debugger's line.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
+        if let executionLine, let fragment = lineFragmentRect(forLine: executionLine) {
+            NSColor.systemGreen.withAlphaComponent(0.22).setFill()
+            fragment.intersection(rect).fill()
+        }
         guard selectedRange().length == 0, let layoutManager, let textContainer else { return }
         let text = string as NSString
         let location = selectedRange().location
@@ -701,6 +718,24 @@ final class CodeTextView: NSTextView {
         lineRect.size.width = bounds.width
         NSColor.controlAccentColor.withAlphaComponent(0.07).setFill()
         lineRect.intersection(rect).fill()
+    }
+
+    /// The full-width rect of a zero-based line, in view coordinates.
+    func lineFragmentRect(forLine line: Int) -> NSRect? {
+        guard let layoutManager else { return nil }
+        let text = string as NSString
+        var start = 0
+        for _ in 0..<line {
+            guard start < text.length else { return nil }
+            start = NSMaxRange(text.lineRange(for: NSRange(location: start, length: 0)))
+        }
+        guard start < text.length else { return nil }
+        var rect = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: start),
+                                                  effectiveRange: nil)
+        rect.origin.x = 0
+        rect.origin.y += textContainerOrigin.y
+        rect.size.width = bounds.width
+        return rect
     }
 
     override func mouseMoved(with event: NSEvent) {

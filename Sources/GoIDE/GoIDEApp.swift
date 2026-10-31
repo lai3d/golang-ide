@@ -20,6 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        workspace?.stopDebugging()  // ends dlv and the debuggee
+    }
 }
 
 @main
@@ -27,6 +31,10 @@ struct GoIDEApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var workspace = Workspace()
     private var bindableWorkspace: Bindable<Workspace> { Bindable(workspace) }
+
+    private static func functionKey(_ key: Int) -> KeyEquivalent {
+        KeyEquivalent(Character(UnicodeScalar(UInt32(key))!))
+    }
 
     var body: some Scene {
         WindowGroup("GoIDE") {
@@ -103,6 +111,34 @@ struct GoIDEApp: App {
                 Button("Quick Fix…") { workspace.requestQuickFix() }
                     .keyboardShortcut(.return, modifiers: .option)
                     .disabled(!workspace.isGoFile)
+            }
+            CommandMenu("Debug") {
+                Button("Start Debugging") { workspace.startDebugging() }
+                    .keyboardShortcut("r", modifiers: [.command, .option])
+                    .disabled(workspace.rootURL == nil || workspace.isDebugging)
+                Button("Stop Debugging") { workspace.stopDebugging() }
+                    .disabled(!workspace.isDebugging)
+                Divider()
+                Button("Continue") { workspace.debugSession?.resume() }
+                    .keyboardShortcut("y", modifiers: [.control, .command])
+                    .disabled(workspace.debugSession?.state != .stopped)
+                Button("Pause") { workspace.debugSession?.pause() }
+                    .disabled(workspace.debugSession?.state != .running)
+                Button("Step Over") { workspace.debugSession?.stepOver() }
+                    .keyboardShortcut(Self.functionKey(NSF6FunctionKey), modifiers: [])
+                    .disabled(workspace.debugSession?.state != .stopped)
+                Button("Step Into") { workspace.debugSession?.stepInto() }
+                    .keyboardShortcut(Self.functionKey(NSF7FunctionKey), modifiers: [])
+                    .disabled(workspace.debugSession?.state != .stopped)
+                Button("Step Out") { workspace.debugSession?.stepOut() }
+                    .keyboardShortcut(Self.functionKey(NSF8FunctionKey), modifiers: [])
+                    .disabled(workspace.debugSession?.state != .stopped)
+                Divider()
+                Button("Toggle Breakpoint") { workspace.toggleBreakpointAtCaret() }
+                    .keyboardShortcut("\\", modifiers: .command)
+                    .disabled(!workspace.isGoFile)
+                Button("Remove All Breakpoints") { workspace.clearBreakpoints() }
+                    .disabled(workspace.breakpoints.isEmpty)
             }
             CommandMenu("Go") {
                 Button("Run") { workspace.runGo(["run", "."]) }

@@ -75,6 +75,25 @@ enum Snapshot {
                 for _ in 0..<150 where workspace.isRunning { try? await Task.sleep(for: .milliseconds(100)) }
                 try? await Task.sleep(for: .milliseconds(500))
             }
+            if let lines = value("--snapshot-debug"), let workspace, let document = workspace.activeDocument {
+                // Comma-separated one-based breakpoint lines in the active file, then debug and wait to pause.
+                for line in lines.split(separator: ",").compactMap({ Int($0) }) {
+                    workspace.toggleBreakpoint(in: document, line: line - 1)
+                }
+                workspace.startDebugging()
+                for _ in 0..<200 where workspace.debugSession?.state != .stopped {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                if let steps = value("--snapshot-steps").flatMap(Int.init) {
+                    for _ in 0..<steps {
+                        workspace.debugSession?.stepOver()
+                        for _ in 0..<50 where workspace.debugSession?.state != .stopped {
+                            try? await Task.sleep(for: .milliseconds(100))
+                        }
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(800))
+            }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()
                 try? await Task.sleep(for: .milliseconds(300))
@@ -90,6 +109,10 @@ enum Snapshot {
                 print("snapshot written to \(path)")
             } else {
                 print("snapshot failed: no window")
+            }
+            if let workspace, workspace.isDebugging {
+                workspace.stopDebugging()  // don't leave dlv behind
+                try? await Task.sleep(for: .milliseconds(800))
             }
             exit(0)  // skip the unsaved-changes prompt
         }

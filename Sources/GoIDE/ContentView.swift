@@ -40,11 +40,16 @@ struct ContentView: View {
                     Label("Run", systemImage: "play.fill")
                 }
                 .help("go run . (⌘R)")
+                Button { workspace.startDebugging() } label: {
+                    Label("Debug", systemImage: "ladybug")
+                }
+                .help("Debug with Delve (⌥⌘R)")
+                .disabled(workspace.isDebugging)
                 Button { workspace.stopRun() } label: {
                     Label("Stop", systemImage: "stop.fill")
                 }
                 .help("Stop (⌘.)")
-                .disabled(!workspace.isRunning)
+                .disabled(!workspace.isRunning && !workspace.isDebugging)
             }
         }
         .task { await workspace.handleLaunchArguments() }
@@ -234,6 +239,8 @@ struct DocumentEditor: View {
             highlightGo: document.isGo,
             isTestFile: document.name.hasSuffix("_test.go"),
             testStatuses: workspace.testStatuses,
+            breakpoints: workspace.breakpointLines(for: document),
+            executionLine: workspace.executionLine(for: document),
             isEditable: !document.isReadOnly,
             isActive: isActive,
             diagnostics: workspace.diagnostics(for: document),
@@ -249,6 +256,7 @@ struct DocumentEditor: View {
                 codeActions: { await workspace.codeActions(in: document, at: $0, length: $1) },
                 performAction: { action in Task { await workspace.perform(action) } },
                 runTest: { name in workspace.runTests(.test(name, in: document.url.deletingLastPathComponent())) },
+                toggleBreakpoint: { line in workspace.toggleBreakpoint(in: document, line: line) },
                 caretMoved: { document.caretOffset = $0 }),
             onChange: { workspace.updateText(of: document, to: $0) })
     }
@@ -363,6 +371,7 @@ struct BottomPanel: View {
                     Text("Problems (\(workspace.allProblems.count))").tag(BottomTab.problems)
                     Text("References").tag(BottomTab.references)
                     Text(testsLabel).tag(BottomTab.tests)
+                    Text("Debug").tag(BottomTab.debug)
                     Text("Output").tag(BottomTab.output)
                 }
                 .pickerStyle(.segmented)
@@ -383,6 +392,7 @@ struct BottomPanel: View {
             case .problems: ProblemsList()
             case .references: ReferencesList()
             case .tests: TestsPanel()
+            case .debug: DebugPanel()
             case .output: OutputView()
             }
         }

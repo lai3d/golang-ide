@@ -2,7 +2,7 @@
 
 A native macOS IDE for Go, written in Swift (SwiftUI + AppKit).
 
-> Early but usable: editing, navigation and refactoring are backed by gopls. Debugging is next.
+> Early but usable: editing, navigation, refactoring, testing and debugging for Go modules.
 
 ## Features
 
@@ -23,8 +23,10 @@ A native macOS IDE for Go, written in Swift (SwiftUI + AppKit).
 - Jump to definition (⌘-click / ⌃⌘J) and back (⌃⌘←), find references (⇧⌘R)
 - Rename symbol across files (⌃⌘E), quick fixes and refactorings (⌥↩)
 
-**Run**
-- `go build ./...` (⌘B), `go test ./...` (⌘U), `go run .` (⌘R), stop (⌘.) with an Output panel
+**Run, test & debug**
+- `go build ./...` (⌘B), `go run .` (⌘R), stop (⌘.) with an Output panel
+- Tests via `go test -json` (⌘U all, ⌃⌘U package, ⌃⌥⌘U at cursor): Tests panel, gutter ▶ / ✓ / ✗
+- Debugger (Delve DAP, ⌥⌘R): click line numbers for breakpoints, continue / step over (F6) / into (F7) / out (F8), call stack, expandable variables; debug a single test
 
 See [ROADMAP.md](ROADMAP.md) for what's next.
 
@@ -32,9 +34,11 @@ See [ROADMAP.md](ROADMAP.md) for what's next.
 
 - macOS 14+
 - Swift 6 toolchain (Xcode 16 or later)
-- Go, plus gopls: `go install golang.org/x/tools/gopls@latest`
+- Go, plus gopls and Delve:
+  `go install golang.org/x/tools/gopls@latest`
+  `go install github.com/go-delve/delve/cmd/dlv@latest`
 
-GoIDE looks for `go` and `gopls` on `PATH`, `$GOBIN`, `$GOPATH/bin`, `~/go/bin`, `/opt/homebrew/bin` and `/usr/local/go/bin`, so it works when launched from Finder too.
+GoIDE looks for `go`, `gopls` and `dlv` on `PATH`, `$GOBIN`, `$GOPATH/bin`, `~/go/bin`, `/opt/homebrew/bin` and `/usr/local/go/bin`, so it works when launched from Finder too.
 
 ## Build & run
 

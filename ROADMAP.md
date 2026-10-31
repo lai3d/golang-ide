@@ -35,7 +35,7 @@ Estimates are Claude Code session time.
 | # | Item | Notes | Est. |
 |---|---|---|---|
 | 3.1 | ✅ Test integration | `go test -json` runner: Tests panel, gutter ▶ / ✓ / ✗ per test, run at cursor / package / all, clickable `file.go:N` | 0.7h |
-| 3.2 | ⬜ Debugger (Delve DAP) | Gutter breakpoints, launch/continue/step/stop, call stack, variables | 2–3h |
+| 3.2 | ✅ Debugger (Delve DAP) | Gutter breakpoints, launch/continue/step/stop, call stack, variables, debug single tests | 2–3h |
 
 ## Phase 4 — Polish & release
 
