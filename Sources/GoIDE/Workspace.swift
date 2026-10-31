@@ -12,6 +12,11 @@ struct RevealTarget: Equatable {
     let position: TextPosition
 }
 
+struct NavigationPoint: Equatable {
+    let url: URL
+    let position: TextPosition
+}
+
 struct ProblemItem: Identifiable {
     let path: String
     let diagnostic: Diagnostic
@@ -34,6 +39,9 @@ final class Workspace {
     private(set) var isRunning = false
     var bottomTab: BottomTab = .problems
     var revealTarget: RevealTarget?
+    private(set) var backStack: [NavigationPoint] = []
+    /// UTF-16 caret offset in the current file, reported by the editor.
+    @ObservationIgnored var caretOffset = 0
 
     @ObservationIgnored private var lsp: LSPClient?
     @ObservationIgnored private var lspReady = false
@@ -53,6 +61,14 @@ final class Workspace {
     }
 
     var isGoFile: Bool { currentFile?.pathExtension == "go" }
+
+    /// Files outside the project (stdlib, module cache) are opened read-only.
+    var isReadOnly: Bool {
+        guard let currentFile, let rootURL else { return false }
+        return !Self.key(for: currentFile).hasPrefix(Self.key(for: rootURL) + "/")
+    }
+
+    var canGoBack: Bool { !backStack.isEmpty }
 
     // MARK: - Folder
 
@@ -91,6 +107,7 @@ final class Workspace {
         isDirty = false
         diagnostics = [:]
         output = ""
+        backStack = []
         if let main = Self.firstFile(named: "main.go", in: fileTree) ?? Self.firstGoFile(in: fileTree) {
             openFile(main)
         }
@@ -116,6 +133,7 @@ final class Workspace {
         currentFile = url
         text = contents
         isDirty = false
+        caretOffset = 0
         documentVersion = 1
         sendDidOpen()
     }
@@ -133,7 +151,7 @@ final class Workspace {
     }
 
     func save() {
-        guard let url = currentFile else { return }
+        guard let url = currentFile, !isReadOnly else { return }
         do {
             try text.write(to: url, atomically: true, encoding: .utf8)
             isDirty = false
@@ -150,6 +168,63 @@ final class Workspace {
         let url = URL(fileURLWithPath: problem.path)
         if currentFile.map(Self.key(for:)) != problem.path { openFile(url) }
         revealTarget = RevealTarget(position: problem.diagnostic.start)
+    }
+
+    // MARK: - Language features
+
+    func completions(at offset: Int) async -> [CompletionItem] {
+        guard case let (lsp, params)? = positionRequest(at: offset),
+              let result = try? await lsp.request("textDocument/completion", params: params)
+        else { return [] }
+        return CompletionItem.parseList(result)
+    }
+
+    func hover(at offset: Int) async -> String? {
+        guard case let (lsp, params)? = positionRequest(at: offset),
+              let result = try? await lsp.request("textDocument/hover", params: params)
+        else { return nil }
+        return HoverContent.parse(result).map { String($0.prefix(4000)) }
+    }
+
+    func jumpToDefinition(at offset: Int) async {
+        guard let url = currentFile, case let (lsp, params)? = positionRequest(at: offset) else { return }
+        let origin = LineIndex(text).position(of: offset)
+        let result = try? await lsp.request("textDocument/definition", params: params)
+        guard let location = result.map(Location.parseAll)?.first,
+              let target = URL(string: location.uri), target.isFileURL
+        else {
+            flashStatus("No definition found")
+            return
+        }
+        backStack.append(NavigationPoint(url: url, position: origin))
+        if backStack.count > 100 { backStack.removeFirst() }
+        navigate(to: URL(fileURLWithPath: target.path), position: location.start)
+    }
+
+    func goBack() {
+        guard let point = backStack.popLast() else { return }
+        navigate(to: point.url, position: point.position)
+    }
+
+    private func navigate(to url: URL, position: TextPosition) {
+        if currentFile.map(Self.key(for:)) != Self.key(for: url) { openFile(url) }
+        guard currentFile.map(Self.key(for:)) == Self.key(for: url) else { return }
+        revealTarget = RevealTarget(position: position)
+    }
+
+    private func positionRequest(at offset: Int) -> (LSPClient, JSONValue)? {
+        guard lspReady, isGoFile, let url = currentFile, let lsp else { return nil }
+        let position = LineIndex(text).position(of: offset)
+        return (lsp, ["textDocument": ["uri": .string(url.absoluteString)], "position": position.json])
+    }
+
+    private func flashStatus(_ message: String) {
+        let previous = lspStatus
+        lspStatus = message
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            if lspStatus == message { lspStatus = previous }
+        }
     }
 
     // MARK: - gopls
@@ -243,6 +318,11 @@ final class Workspace {
         let textDocument: JSONValue = [
             "synchronization": ["didSave": true, "dynamicRegistration": false],
             "publishDiagnostics": ["relatedInformation": false],
+            "completion": [
+                "completionItem": ["snippetSupport": false, "documentationFormat": ["markdown", "plaintext"]],
+            ],
+            "hover": ["contentFormat": ["markdown", "plaintext"]],
+            "definition": ["linkSupport": false],
         ]
         let workspace: JSONValue = ["configuration": true, "workspaceFolders": true]
         return [

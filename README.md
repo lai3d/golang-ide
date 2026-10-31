@@ -9,6 +9,9 @@ A native macOS IDE for Go, written in Swift (SwiftUI + AppKit).
 - Project sidebar (open any Go module folder)
 - NSTextView editor with Go syntax highlighting, auto-indent, find bar, undo
 - **gopls** integration over LSP: live diagnostics as you type, shown as underlines and in the Problems panel (click to jump)
+- **Completion** as you type identifiers or `.` (or press Esc): ↑/↓ to choose, ↩/⇥ to accept; auto-adds imports
+- **Hover** over an identifier for its signature and docs
+- **Go to definition**: ⌘-click or ⌃⌘J, back with ⌃⌘← (stdlib / module files open read-only)
 - `go build ./...` (⌘B), `go test ./...` (⌘U), `go run .` (⌘R), stop (⌘.) with an Output panel
 
 ## Requirements
@@ -41,7 +44,7 @@ You can also open `Package.swift` in Xcode.
 
 ## Roadmap
 
-- Completion, hover, go-to-definition, find references, rename (gopls)
+- Find references, rename, signature help, code actions (gopls)
 - Format on save (gofmt / `textDocument/formatting`)
 - Line-number gutter, tabs for multiple open files
 - tree-sitter-go for incremental highlighting

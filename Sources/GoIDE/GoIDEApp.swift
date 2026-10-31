@@ -35,6 +35,16 @@ struct GoIDEApp: App {
                     .keyboardShortcut("s")
                     .disabled(workspace.currentFile == nil)
             }
+            CommandMenu("Navigate") {
+                Button("Jump to Definition") {
+                    Task { await workspace.jumpToDefinition(at: workspace.caretOffset) }
+                }
+                .keyboardShortcut("j", modifiers: [.control, .command])
+                .disabled(!workspace.isGoFile)
+                Button("Go Back") { workspace.goBack() }
+                    .keyboardShortcut(.leftArrow, modifiers: [.control, .command])
+                    .disabled(!workspace.canGoBack)
+            }
             CommandMenu("Go") {
                 Button("Run") { workspace.runGo(["run", "."]) }
                     .keyboardShortcut("r")

@@ -101,8 +101,14 @@ struct EditorArea: View {
                     CodeEditorView(
                         text: workspace.text,
                         highlightGo: workspace.isGoFile,
+                        isEditable: !workspace.isReadOnly,
                         diagnostics: workspace.currentDiagnostics,
                         reveal: workspace.revealTarget,
+                        services: EditorServices(
+                            completions: { await workspace.completions(at: $0) },
+                            hover: { await workspace.hover(at: $0) },
+                            definition: { offset in Task { await workspace.jumpToDefinition(at: offset) } },
+                            caretMoved: { workspace.caretOffset = $0 }),
                         onChange: { workspace.updateText($0) })
                 } else {
                     Text("Select a file")
@@ -123,9 +129,19 @@ struct EditorHeader: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            Button { workspace.goBack() } label: { Image(systemName: "chevron.left") }
+                .buttonStyle(.borderless)
+                .disabled(!workspace.canGoBack)
+                .help("Go Back (⌃⌘←)")
             if let file = workspace.currentFile {
                 Image(systemName: "doc.text").foregroundStyle(.secondary)
                 Text(file.lastPathComponent).fontWeight(.medium)
+                if workspace.isReadOnly {
+                    Text("Read Only")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(.quaternary, in: Capsule())
+                }
                 if workspace.isDirty {
                     Circle().fill(.secondary).frame(width: 7, height: 7).help("Unsaved changes")
                 }
