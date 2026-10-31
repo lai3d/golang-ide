@@ -47,9 +47,24 @@ Estimates are Claude Code session time.
 **User must do manually** (duration outside Claude's control): Apple Developer Program enrollment,
 Developer ID certificate, notarization credentials — only needed to ship a signed/notarized build to others.
 
+## Phase 5 — Deeper language features & Git
+
+Released so far: [v0.1.0](https://github.com/lai3d/golang-ide/releases/tag/v0.1.0) (phases 1–4).
+
+| # | Item | Notes | Est. |
+|---|---|---|---|
+| 5.1 | ⬜ Occurrence highlights | Highlight other uses of the symbol under the caret (`textDocument/documentHighlight`) | 0.3h |
+| 5.2 | ⬜ Inlay hints | Parameter names and inferred types inline (`textDocument/inlayHint`), toggle in Settings | 0.5h |
+| 5.3 | ⬜ Semantic highlighting | gopls semantic tokens over the regex lexer: types, params, consts, packages, fields | 0.6h |
+| 5.4 | ⬜ Call hierarchy | Incoming / outgoing calls tree for the function at the caret | 0.5h |
+| 5.5 | ⬜ Git status | Sidebar badges (M / A / ? / D), gutter change bars vs HEAD, branch in the toolbar | 0.7h |
+| 5.6 | ⬜ Inline blame | Author, date and summary of the caret line's last commit, at the end of the line | 0.4h |
+| 5.7 | ⬜ Multiple windows | One project per window (File ▸ New Window, ⇧⌘N) | 0.8h |
+| 5.8 | ⬜ Code folding | `textDocument/foldingRange`; fold markers in the gutter, fold/unfold all | 1h |
+
 ## Later / ideas
 
-- tree-sitter-go for incremental highlighting and code folding
-- Inlay hints, semantic tokens, call hierarchy
-- Git status in the sidebar, inline blame
-- Multiple windows / workspaces
+- tree-sitter-go for incremental parsing (if semantic tokens + the regex lexer fall short)
+- Git commit / diff UI
+- Find & replace across the project
+- Developer ID signing + notarization in the release workflow (needs the user's Apple Developer account)
