@@ -52,6 +52,9 @@ final class Document: Identifiable {
 @MainActor
 @Observable
 final class Workspace {
+    /// The app's workspace (for debug hooks like --snapshot).
+    static weak var current: Workspace?
+
     private(set) var rootURL: URL?
     private(set) var fileTree: [FileNode] = []
     private(set) var documents: [Document] = []
@@ -62,6 +65,9 @@ final class Workspace {
     private(set) var isRunning = false
     private(set) var backStack: [NavigationPoint] = []
     var bottomTab: BottomTab = .problems
+    var formatOnSave = UserDefaults.standard.object(forKey: "formatOnSave") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(formatOnSave, forKey: "formatOnSave") }
+    }
 
     @ObservationIgnored private var lsp: LSPClient?
     @ObservationIgnored private var lspReady = false
@@ -113,7 +119,7 @@ final class Workspace {
         while let arg = args.popFirst() {
             if arg.hasPrefix("--") { _ = args.popFirst(); continue }  // --flag value
             var isDir: ObjCBool = false
-            let url = URL(fileURLWithPath: arg).standardizedFileURL
+            let url = URL(fileURLWithPath: arg).canonicalFileURL
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
             if isDir.boolValue { folder = folder ?? url } else { files.append(url) }
         }
@@ -128,6 +134,8 @@ final class Workspace {
         }
         for document in documents { sendDidClose(document) }
         await stopLanguageServer()
+        // Use the real path (e.g. /private/tmp, not /tmp) so it matches what gopls reports.
+        let url = url.canonicalFileURL
         rootURL = url
         fileTree = FileNode.loadTree(at: url)
         documents = []
@@ -151,6 +159,7 @@ final class Workspace {
     /// Opens `url` in a tab (or switches to its existing tab).
     @discardableResult
     func openFile(_ url: URL) -> Document? {
+        let url = url.canonicalFileURL
         let key = Self.key(for: url)
         if let existing = documents.first(where: { Self.key(for: $0.url) == key }) {
             activeDocument = existing
@@ -239,11 +248,65 @@ final class Workspace {
         document.text = newText
         document.isDirty = true
         document.version += 1
-        guard lspReady, document.isGo else { return }
-        try? lsp?.notify("textDocument/didChange", params: [
-            "textDocument": ["uri": .string(document.url.absoluteString), "version": .int(document.version)],
-            "contentChanges": [["text": .string(newText)]],
-        ])
+        sendDidChange(document)
+    }
+
+    /// Changes a document's text programmatically (format, rename, reload…).
+    /// The editor applies it as a single undoable edit and keeps the caret in place.
+    func replaceText(of document: Document, with newText: String) {
+        updateText(of: document, to: newText)
+    }
+
+    /// The edits in `edit` that target `document`.
+    func edits(for document: Document, in edit: WorkspaceEdit) -> [TextEdit] {
+        let key = Self.key(for: document.url)
+        return edit.changes.filter { uri, _ in URL(string: uri).map(Self.key(for:)) == key }.flatMap(\.value)
+    }
+
+    // MARK: - Formatting
+
+    /// Organizes imports, then formats with gopls (gofmt).
+    func format(_ document: Document) async {
+        guard lspReady, document.isGo, !document.isReadOnly, let lsp else { return }
+        let uri = JSONValue.string(document.url.absoluteString)
+
+        var version = document.version
+        if let result = try? await lsp.request("textDocument/codeAction", params: [
+            "textDocument": ["uri": uri],
+            "range": ["start": TextPosition(line: 0, character: 0).json, "end": TextPosition(line: 0, character: 0).json],
+            "context": ["diagnostics": [], "only": ["source.organizeImports"]],
+        ]), document.version == version {
+            for action in CodeAction.parseAll(result) where action.kind == "source.organizeImports" {
+                guard let edit = action.edit else { continue }
+                replaceText(of: document, with: TextEdit.apply(edits(for: document, in: edit), to: document.text))
+            }
+        }
+
+        version = document.version
+        guard let result = try? await lsp.request("textDocument/formatting", params: [
+            "textDocument": ["uri": uri],
+            "options": ["tabSize": 4, "insertSpaces": false],
+        ]), document.version == version else { return }  // edited meanwhile: skip
+        let edits = result.arrayValue?.compactMap(TextEdit.parse) ?? []
+        replaceText(of: document, with: TextEdit.apply(edits, to: document.text))
+    }
+
+    func formatActiveDocument() async {
+        if let activeDocument { await format(activeDocument) }
+    }
+
+    /// ⌘S: format (if enabled), then save.
+    func saveFormatted(_ document: Document) async {
+        if formatOnSave { await format(document) }
+        save(document)
+    }
+
+    func saveActiveFormatted() async {
+        if let activeDocument { await saveFormatted(activeDocument) }
+    }
+
+    func saveAllFormatted() async {
+        for document in dirtyDocuments { await saveFormatted(document) }
     }
 
     func save() {
@@ -412,6 +475,14 @@ final class Workspace {
         ])
     }
 
+    private func sendDidChange(_ document: Document) {
+        guard lspReady, document.isGo else { return }
+        try? lsp?.notify("textDocument/didChange", params: [
+            "textDocument": ["uri": .string(document.url.absoluteString), "version": .int(document.version)],
+            "contentChanges": [["text": .string(document.text)]],
+        ])
+    }
+
     private func sendDidClose(_ document: Document) {
         guard lspReady, document.isGo else { return }
         try? lsp?.notify("textDocument/didClose", params: [
@@ -428,6 +499,14 @@ final class Workspace {
             ],
             "hover": ["contentFormat": ["markdown", "plaintext"]],
             "definition": ["linkSupport": false],
+            "formatting": ["dynamicRegistration": false],
+            "codeAction": [
+                "isPreferredSupport": true,
+                "codeActionLiteralSupport": ["codeActionKind": ["valueSet": [
+                    "", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite",
+                    "source", "source.organizeImports", "source.fixAll",
+                ]]],
+            ],
         ]
         let workspace: JSONValue = ["configuration": true, "workspaceFolders": true]
         return [
@@ -504,7 +583,7 @@ final class Workspace {
     // MARK: - Helpers
 
     static func key(for url: URL) -> String {
-        url.resolvingSymlinksInPath().path
+        url.canonicalFileURL.path
     }
 
     /// Files outside the project (stdlib, module cache) open read-only.

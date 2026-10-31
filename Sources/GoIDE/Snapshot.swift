@@ -12,6 +12,10 @@ enum Snapshot {
         if let d = args.firstIndex(of: "--snapshot-delay"), d + 1 < args.count, let v = Double(args[d + 1]) { delay = v }
         Task {
             try? await Task.sleep(for: .seconds(delay))
+            if args.contains("--snapshot-format"), let workspace = Workspace.current {
+                await workspace.formatActiveDocument()
+                try? await Task.sleep(for: .milliseconds(300))
+            }
             if let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }),
                let view = window.contentView?.superview ?? window.contentView,
                let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
@@ -21,7 +25,7 @@ enum Snapshot {
             } else {
                 print("snapshot failed: no window")
             }
-            NSApp.terminate(nil)
+            exit(0)  // skip the unsaved-changes prompt
         }
     }
 }

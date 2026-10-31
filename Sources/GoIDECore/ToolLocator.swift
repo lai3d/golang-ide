@@ -41,3 +41,13 @@ public enum ToolLocator {
         return env
     }
 }
+
+public extension URL {
+    /// The canonical file URL as the OS (and gopls) sees it: symlinks resolved and
+    /// `/tmp` → `/private/tmp`. Unlike `resolvingSymlinksInPath()`, keeps `/private`.
+    var canonicalFileURL: URL {
+        guard isFileURL, let resolved = realpath(path, nil) else { return standardizedFileURL }
+        defer { free(resolved) }
+        return URL(fileURLWithPath: String(cString: resolved), isDirectory: hasDirectoryPath)
+    }
+}

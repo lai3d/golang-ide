@@ -26,12 +26,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct GoIDEApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var workspace = Workspace()
+    private var bindableWorkspace: Bindable<Workspace> { Bindable(workspace) }
 
     var body: some Scene {
         WindowGroup("GoIDE") {
             ContentView()
                 .environment(workspace)
-                .onAppear { appDelegate.workspace = workspace }
+                .onAppear {
+                    appDelegate.workspace = workspace
+                    Workspace.current = workspace
+                }
                 .frame(minWidth: 900, minHeight: 600)
         }
         .commands {
@@ -48,10 +52,10 @@ struct GoIDEApp: App {
                 Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
                     .keyboardShortcut("w", modifiers: [.command, .shift])
                 Divider()
-                Button("Save") { workspace.save() }
+                Button("Save") { Task { await workspace.saveActiveFormatted() } }
                     .keyboardShortcut("s")
                     .disabled(workspace.activeDocument == nil)
-                Button("Save All") { workspace.saveAll() }
+                Button("Save All") { Task { await workspace.saveAllFormatted() } }
                     .keyboardShortcut("s", modifiers: [.command, .option])
             }
             CommandMenu("Navigate") {
@@ -80,6 +84,11 @@ struct GoIDEApp: App {
                 Divider()
                 Button("Stop") { workspace.stopRun() }
                     .keyboardShortcut(".")
+                Divider()
+                Button("Format Document") { Task { await workspace.formatActiveDocument() } }
+                    .keyboardShortcut("f", modifiers: [.option, .shift])
+                    .disabled(!workspace.isGoFile)
+                Toggle("Format on Save", isOn: bindableWorkspace.formatOnSave)
                 Divider()
                 Button("Restart gopls") { Task { await workspace.restartLanguageServer() } }
             }

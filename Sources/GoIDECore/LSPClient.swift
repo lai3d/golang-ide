@@ -18,6 +18,8 @@ public final class LSPClient: @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    /// Set GOIDE_LSP_TRACE=1 to log every message to stderr.
+    private static let trace = ProcessInfo.processInfo.environment["GOIDE_LSP_TRACE"] != nil
     private var process: Process?
     private var stdin: FileHandle?
     private var framer = LSPFramer()
@@ -131,7 +133,9 @@ public final class LSPClient: @unchecked Sendable {
     private func send(_ message: JSONValue) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .withoutEscapingSlashes
-        let data = LSPFramer.frame(try encoder.encode(message))
+        let body = try encoder.encode(message)
+        if Self.trace { FileHandle.standardError.write(Data("--> ".utf8) + body + Data("\n".utf8)) }
+        let data = LSPFramer.frame(body)
         try lock.withLock {
             guard let stdin else { throw ClientError.notRunning }
             try stdin.write(contentsOf: data)
@@ -142,6 +146,7 @@ public final class LSPClient: @unchecked Sendable {
         let bodies = lock.withLock { framer.append(data) }
         let decoder = JSONDecoder()
         for body in bodies {
+            if Self.trace { FileHandle.standardError.write(Data("<-- ".utf8) + body + Data("\n".utf8)) }
             guard let message = try? decoder.decode(JSONValue.self, from: body) else { continue }
             dispatch(message)
         }

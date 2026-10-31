@@ -108,14 +108,8 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         if textView.string != text {
-            // A different file was opened (typing never gets here: text already matches).
-            coordinator.dismissPopups()
-            textView.string = text
-            textView.undoManager?.removeAllActions()
-            textView.setSelectedRange(NSRange(location: 0, length: 0))
-            textView.scrollToBeginningOfDocument(nil)
-            coordinator.ruler?.textDidChange()
-            coordinator.applyStyling()
+            // Changed programmatically (format, rename, reload); typing never gets here.
+            coordinator.applyExternalChange(text)
         } else if coordinator.appliedDiagnostics != diagnostics || coordinator.appliedHighlightGo != highlightGo {
             coordinator.applyStyling()
         }
@@ -152,6 +146,7 @@ struct CodeEditorView: NSViewRepresentable {
         private var completionTask: Task<Void, Never>?
         private var lastReplacement: String?
         private var isApplyingCompletion = false
+        private var isApplyingExternalChange = false
 
         private var hoverTask: Task<Void, Never>?
         private var hoverWord: NSRange?
@@ -179,7 +174,7 @@ struct CodeEditorView: NSViewRepresentable {
 
             let typed = lastReplacement
             lastReplacement = nil
-            guard parent.highlightGo, !isApplyingCompletion else { return }
+            guard parent.highlightGo, !isApplyingCompletion, !isApplyingExternalChange else { return }
 
             if let typed, typed.utf16.count == 1, let unit = typed.utf16.first,
                unit == 0x2E || GoIdentifier.isIdentifier(unit) {
@@ -331,6 +326,37 @@ struct CodeEditorView: NSViewRepresentable {
             textView.undoManager?.endUndoGrouping()
             textView.setSelectedRange(NSRange(location: newCaret, length: 0))
             textView.scrollRangeToVisible(NSRange(location: newCaret, length: 0))
+        }
+
+        /// Applies a programmatic change as one undoable edit, keeping the caret's line/column.
+        func applyExternalChange(_ newText: String) {
+            guard let textView, let storage = textView.textStorage else { return }
+            dismissPopups()
+            guard let change = TextDiff.replacement(from: textView.string, to: newText) else { return }
+            let caret = textView.selectedRange().location
+            let caretPosition = LineIndex(textView.string).position(of: caret)
+
+            isApplyingExternalChange = true
+            defer { isApplyingExternalChange = false }
+            let undoable = textView.shouldChangeText(in: change.range, replacementString: change.text)
+            storage.replaceCharacters(in: change.range, with: change.text)
+            if undoable {
+                textView.didChangeText()
+            } else {  // read-only view: just refresh
+                ruler?.textDidChange()
+                applyStyling()
+            }
+
+            let delta = change.text.utf16.count - change.range.length
+            let newCaret: Int
+            if caret <= change.range.location {
+                newCaret = caret
+            } else if caret >= NSMaxRange(change.range) {
+                newCaret = caret + delta
+            } else {
+                newCaret = LineIndex(newText).offset(of: caretPosition)
+            }
+            textView.setSelectedRange(NSRange(location: min(max(newCaret, 0), storage.length), length: 0))
         }
 
         // MARK: Hover

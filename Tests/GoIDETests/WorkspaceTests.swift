@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GoIDE
+import GoIDECore
 
 @MainActor
 @Suite struct WorkspaceTabTests {
@@ -66,5 +67,31 @@ import Testing
         workspace.save(a)
         #expect(!a.isDirty)
         #expect(try String(contentsOf: url("a.go"), encoding: .utf8).contains("func x()"))
+    }
+}
+
+@MainActor
+@Suite struct WorkspaceFormattingTests {
+    @Test(.enabled(if: GoIDECore.ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
+    func formatsAndOrganizesImportsOnSave() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("goide-wsfmt-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try "module example.com/t\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
+        let file = dir.appendingPathComponent("main.go")
+        try "package main\n\nfunc main(){\nfmt.Println( \"hi\" )\n}\n".write(to: file, atomically: true, encoding: .utf8)
+
+        let workspace = Workspace()
+        await workspace.openFolder(dir)
+        let document = try #require(workspace.activeDocument)
+        #expect(workspace.lspStatus == "gopls: ready")
+
+        await workspace.format(document)
+        #expect(document.isDirty)  // formatted in memory, not yet saved
+        #expect(document.text.contains("func main() {"))
+        await workspace.saveFormatted(document)
+        #expect(!document.isDirty)
+        let saved = try String(contentsOf: file, encoding: .utf8)
+        #expect(saved == "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n")
     }
 }
