@@ -4,7 +4,17 @@
 
 A native macOS IDE for Go, written in Swift (SwiftUI + AppKit).
 
-> Early but usable: editing, navigation, refactoring, testing and debugging for Go modules.
+> Early but usable: editing, navigation, refactoring, testing, debugging and profiling for Go modules.
+
+![Debugging with Delve: paused at a breakpoint, call stack and variables](docs/screenshots/debugger.png)
+
+| | |
+|---|---|
+| ![Completion and inlay hints](docs/screenshots/editor.png) <br> Completion, inlay hints, Git change bars | ![Tests with coverage](docs/screenshots/tests.png) <br> Tests panel with coverage |
+| ![Dependencies sidebar](docs/screenshots/dependencies.png) <br> Dependencies and available updates | ![CPU profile](docs/screenshots/profile.png) <br> CPU / memory profiling (pprof) |
+| ![Rename preview](docs/screenshots/rename.png) <br> Rename preview across files | |
+
+Screenshots are generated with `scripts/screenshots.sh` (GoIDE's `--snapshot` mode).
 
 ## Features
 
@@ -26,17 +36,21 @@ A native macOS IDE for Go, written in Swift (SwiftUI + AppKit).
 - Git: status badges in the sidebar, branch in the title bar, inline blame for the caret line
 - Multiple windows, one project each (⇧⌘N)
 - Integrated terminal (⌃`) running your login shell in the project folder
+- Dependencies sidebar (⌃⇧M): every `go.mod` (and `go.work` members) with direct / indirect requirements, replacements and available updates; upgrade one or all, tidy, `go mod why`; create a `go.work` for multi-module folders
 
 **Language (gopls)**
 - Live diagnostics: underlines, gutter dots, Problems panel
 - Completion with auto-imports, hover docs, signature help while typing calls
 - Jump to definition (⌘-click / ⌃⌘J), implementation (⌥⌘J), type definition (⌃⌥⌘J) and back (⌃⌘←); find references (⇧⌘R), call hierarchy (⌃⌥H)
-- Rename symbol across files (⌃⌘E), quick fixes and refactorings (⌥↩)
+- Rename symbol across files (⌃⌘E) with an optional preview of every changed line; quick fixes and refactorings (⌥↩)
+- Refactor menu: Extract Function (⌥⌘M) / Method / Variable (⌥⌘V) / Constant, Inline Call (⌥⌘N) / Variable
+- Settings ▸ Go: gofumpt, local import prefix, staticcheck, shadow analyzer, build tags (applied live)
 
 **Run, test & debug**
 - Run configurations (main package, arguments, environment) for Run (⌘R) and Debug; `go build ./...` (⌘B), stop (⌘.)
 - Test coverage (⌃⇧⌘U): covered / uncovered lines tinted, per-file percentages
 - Tests via `go test -json` (⌘U all, ⌃⌘U package, ⌃⌥⌘U at cursor): Tests panel, gutter ▶ / ✓ / ✗
+- Profiling (Go ▸ Profile, ⌃⌥⌘P): CPU / memory pprof of a package's benchmarks or tests, top functions or lines, jump to source, open the pprof web UI
 - Debugger (Delve DAP, ⌥⌘R): click line numbers for breakpoints, continue / step over (F6) / into (F7) / out (F8), call stack, expandable variables; debug a single test
 
 See [ROADMAP.md](ROADMAP.md) for what's next.

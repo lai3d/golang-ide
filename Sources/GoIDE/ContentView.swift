@@ -493,8 +493,10 @@ struct BottomPanel: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .fixedSize()
-                Spacer()
+                // Compressible (labels truncate) so a narrow window doesn't squeeze the sidebar.
+                .frame(minWidth: 360, maxWidth: 680)
+                .layoutPriority(1)
+                Spacer(minLength: 0)
                 if workspace.isRunning { ProgressView().controlSize(.small) }
                 Text(workspace.lspStatus)
                     .font(.caption)

@@ -46,6 +46,11 @@ public enum ToolLocator {
     ) -> [String: String] {
         var env = base
         env["PATH"] = searchDirectories(environment: base).joined(separator: ":")
+        // Tools run in other directories. Go trusts $PWD for its working directory when it
+        // names the same folder, so an inherited symlinked spelling (/var vs /private/var)
+        // would make `go build` see the module at a different path than the package.
+        env["PWD"] = nil
+        env["OLDPWD"] = nil
         return env
     }
 }

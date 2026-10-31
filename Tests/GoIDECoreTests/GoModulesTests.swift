@@ -105,3 +105,42 @@ import Testing
         #expect(GoModuleFinder.relativeUsePath(root2, root: root2) == ".")
     }
 }
+
+@Suite struct ToolEnvironmentTests {
+    @Test func dropsInheritedWorkingDirectory() {
+        let env = ToolLocator.environment(base: ["PATH": "/usr/bin", "PWD": "/var/x", "OLDPWD": "/tmp", "HOME": "/h"])
+        #expect(env["PWD"] == nil)
+        #expect(env["OLDPWD"] == nil)
+        #expect(env["HOME"] == "/h")
+        #expect(env["PATH"]?.contains("/usr/bin") == true)
+    }
+
+    /// `go build` from a symlinked $PWD used to fail with "outside main module".
+    @Test func goBuildsWhenLaunchedFromSymlinkedDirectory() throws {
+        guard ToolLocator.find("go") != nil else { return }
+        let real = FileManager.default.temporaryDirectory.canonicalFileURL
+            .appendingPathComponent("pwdmod-\(UUID().uuidString)")
+        let link = FileManager.default.temporaryDirectory.canonicalFileURL
+            .appendingPathComponent("pwdlink-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: link)
+            try? FileManager.default.removeItem(at: real)
+        }
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        try "module example.com/pwd\n\ngo 1.21\n".write(to: real.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
+        try "package main\n\nfunc main() {}\n".write(to: real.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+        // As if GoIDE had been started from a shell inside the symlinked folder.
+        let env = ToolLocator.environment(base: ProcessInfo.processInfo.environment.merging(["PWD": link.path]) { $1 })
+        let process = Process()
+        process.executableURL = ToolLocator.find("go")
+        process.arguments = ["build", "-o", "/dev/null", real.path]
+        process.currentDirectoryURL = real
+        process.environment = env
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+    }
+}

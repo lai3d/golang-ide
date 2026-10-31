@@ -187,36 +187,34 @@ private struct DependencyRow: View {
     var body: some View {
         let update = workspace.availableUpdate(for: requirement.path, in: group)
         let replacement = group.file.replacement(for: requirement.path)
-        HStack(spacing: 6) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(requirement.path)
-                    .font(.system(size: 12, design: .monospaced))
-                    .lineLimit(1).truncationMode(.middle)
-                    .help(requirement.path)
-                HStack(spacing: 4) {
-                    Text(requirement.version)
-                    if let replacement {
-                        Image(systemName: "arrow.turn.down.right")
-                        Text(replacement.newPath + (replacement.newVersion.map { " \($0)" } ?? ""))
-                            .lineLimit(1).truncationMode(.middle)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(requirement.path)
+                .font(.system(size: 12, design: .monospaced))
+                .lineLimit(1).truncationMode(.head)
+                .help(requirement.path)
+            HStack(spacing: 4) {
+                Text(requirement.version)
+                if let replacement {
+                    Image(systemName: "arrow.turn.down.right")
+                    Text(replacement.newPath + (replacement.newVersion.map { " \($0)" } ?? ""))
+                        .lineLimit(1).truncationMode(.middle)
+                }
+                Spacer(minLength: 4)
+                if let update {
+                    Button { workspace.upgrade([requirement.path], in: group) } label: {
+                        Text("↑ \(update)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Capsule().fill(Color.green.opacity(0.18)))
+                            .foregroundStyle(Color.green)
                     }
+                    .buttonStyle(.plain)
+                    .help("Upgrade to \(update) (go get \(requirement.path)@latest)")
+                    .disabled(workspace.isRunning)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 4)
-            if let update {
-                Button { workspace.upgrade([requirement.path], in: group) } label: {
-                    Text("↑ \(update)")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Capsule().fill(Color.green.opacity(0.18)))
-                        .foregroundStyle(Color.green)
-                }
-                .buttonStyle(.plain)
-                .help("Upgrade to \(update) (go get \(requirement.path)@latest)")
-                .disabled(workspace.isRunning)
-            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { workspace.openRequirement(line: requirement.line, in: group) }
