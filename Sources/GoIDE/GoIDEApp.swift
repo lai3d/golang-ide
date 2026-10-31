@@ -43,6 +43,11 @@ struct GoIDEApp: App {
                 Button("Open Folder…") { workspace.presentOpenPanel() }
                     .keyboardShortcut("o")
             }
+            CommandGroup(replacing: .printItem) {
+                Button("Open Quickly…") { workspace.showQuickOpen() }
+                    .keyboardShortcut("p")
+                    .disabled(workspace.rootURL == nil)
+            }
             CommandGroup(replacing: .saveItem) {
                 Button("Close Tab") {
                     if let document = workspace.activeDocument { workspace.closeDocument(document) }
@@ -63,6 +68,10 @@ struct GoIDEApp: App {
                     .keyboardShortcut("f", modifiers: [.command, .shift])
             }
             CommandMenu("Navigate") {
+                Button("Open Quickly…") { workspace.showQuickOpen() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                    .disabled(workspace.rootURL == nil)
+                Divider()
                 Button("Jump to Definition") {
                     guard let document = workspace.activeDocument else { return }
                     Task { await workspace.jumpToDefinition(from: document, at: document.caretOffset) }

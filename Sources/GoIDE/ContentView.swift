@@ -16,6 +16,16 @@ struct ContentView: View {
             }
         }
         .navigationTitle(workspace.rootURL?.lastPathComponent ?? "GoIDE")
+        .overlay(alignment: .top) {
+            if workspace.isQuickOpenVisible {
+                ZStack(alignment: .top) {
+                    Color.black.opacity(0.08)
+                        .ignoresSafeArea()
+                        .onTapGesture { workspace.hideQuickOpen() }
+                    QuickOpenView().padding(.top, 60)
+                }
+            }
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { workspace.runGo(["build", "./..."]) } label: {
@@ -69,6 +79,7 @@ struct Sidebar: View {
             Picker("Sidebar", selection: $workspace.sidebarMode) {
                 Image(systemName: "folder").help("Files").tag(SidebarMode.files)
                 Image(systemName: "magnifyingglass").help("Find in Project (⇧⌘F)").tag(SidebarMode.search)
+                Image(systemName: "list.bullet.indent").help("Outline").tag(SidebarMode.outline)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -77,6 +88,7 @@ struct Sidebar: View {
             switch workspace.sidebarMode {
             case .files: FileTreeView()
             case .search: SearchView()
+            case .outline: OutlineView()
             }
         }
     }

@@ -7,7 +7,18 @@ enum BottomTab: Hashable {
 }
 
 enum SidebarMode: Hashable {
-    case files, search
+    case files, search, outline
+}
+
+/// A row in the Open Quickly palette: a file or a symbol.
+struct QuickOpenItem: Identifiable, Hashable {
+    let id = UUID()
+    let title: String
+    let subtitle: String
+    let icon: String
+    let url: URL
+    let position: TextPosition?
+    let score: Int
 }
 
 /// A request for an editor to move the caret to a position (and optionally select).
@@ -102,6 +113,16 @@ final class Workspace {
 
     /// Bumped to ask the active editor to show its quick-fix menu (⌥↩).
     private(set) var quickFixRequest = 0
+
+    // Open Quickly
+    var isQuickOpenVisible = false
+    var quickOpenQuery = ""
+    private(set) var quickOpenItems: [QuickOpenItem] = []
+    @ObservationIgnored private var quickOpenFiles: [String]?
+    @ObservationIgnored private var quickOpenTask: Task<Void, Never>?
+
+    // Outline of the active document
+    private(set) var outline: [SymbolNode] = []
 
     // Find references
     private(set) var referenceResults: [SearchFileResult] = []
@@ -626,6 +647,96 @@ final class Workspace {
         }
     }
 
+    // MARK: - Open Quickly & outline
+
+    func showQuickOpen() {
+        guard rootURL != nil else { return }
+        quickOpenFiles = nil  // re-list: files may have changed
+        quickOpenQuery = ""
+        isQuickOpenVisible = true
+        updateQuickOpen()
+    }
+
+    func hideQuickOpen() {
+        quickOpenTask?.cancel()
+        isQuickOpenVisible = false
+    }
+
+    /// Files now (fuzzy, file name weighted), then gopls workspace symbols merged in.
+    func updateQuickOpen() {
+        quickOpenTask?.cancel()
+        guard let rootURL else { return }
+        let query = quickOpenQuery.trimmingCharacters(in: .whitespaces)
+        if quickOpenFiles == nil { quickOpenFiles = ProjectSearch.files(under: rootURL) }
+        let files = fileItems(matching: query)
+        quickOpenItems = files
+        guard query.count >= 2, lspReady, let lsp else { return }
+        quickOpenTask = Task {
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled,
+                  let result = try? await lsp.request("workspace/symbol", params: ["query": .string(query)]),
+                  !Task.isCancelled, query == quickOpenQuery.trimmingCharacters(in: .whitespaces)
+            else { return }
+            let symbols = SymbolNode.parseAll(result).prefix(200).compactMap { symbol -> QuickOpenItem? in
+                guard let uri = symbol.uri, let url = URL(string: uri), url.isFileURL,
+                      let score = FuzzyMatch.score(query, symbol.name) else { return nil }
+                return QuickOpenItem(
+                    title: symbol.name,
+                    subtitle: [symbol.detail, displayPath(url.path)].compactMap { $0 }.filter { !$0.isEmpty }
+                        .joined(separator: " — "),
+                    icon: SymbolStyle.icon(for: symbol.kind), url: url, position: symbol.position,
+                    score: score + 5)  // a symbol named exactly like the query beats a file
+            }
+            quickOpenItems = (files + symbols).sorted { $0.score > $1.score }.prefix(60).map { $0 }
+        }
+    }
+
+    private func fileItems(matching query: String) -> [QuickOpenItem] {
+        if query.isEmpty {  // open tabs first
+            return documents.reversed().map {
+                QuickOpenItem(title: $0.name, subtitle: displayPath($0.url.deletingLastPathComponent().path),
+                              icon: "doc.text", url: $0.url, position: nil, score: 0)
+            }
+        }
+        return (quickOpenFiles ?? []).compactMap { path -> QuickOpenItem? in
+            let relative = displayPath(path)
+            guard let score = FuzzyMatch.scorePath(query, relative) else { return nil }
+            return QuickOpenItem(title: (relative as NSString).lastPathComponent,
+                                 subtitle: (relative as NSString).deletingLastPathComponent,
+                                 icon: "doc.text", url: URL(fileURLWithPath: path), position: nil, score: score)
+        }
+        .sorted { $0.score > $1.score }
+        .prefix(60).map { $0 }
+    }
+
+    func open(_ item: QuickOpenItem) {
+        hideQuickOpen()
+        if let position = item.position {
+            navigate(to: item.url, position: position)
+        } else {
+            openFile(item.url)
+        }
+    }
+
+    /// Re-reads the active document's symbols (debounced by the caller).
+    func refreshOutline() async {
+        guard let document = activeDocument, document.isGo, lspReady, let lsp,
+              let result = try? await lsp.request("textDocument/documentSymbol", params: [
+                  "textDocument": ["uri": .string(document.url.absoluteString)],
+              ]),
+              document === activeDocument
+        else {
+            if activeDocument?.isGo != true { outline = [] }
+            return
+        }
+        outline = SymbolNode.parseAll(result)
+    }
+
+    func reveal(_ symbol: SymbolNode) {
+        guard let document = activeDocument else { return }
+        document.revealTarget = RevealTarget(position: symbol.position)
+    }
+
     // MARK: - Code actions
 
     func requestQuickFix() {
@@ -933,6 +1044,7 @@ final class Workspace {
             ]],
             "definition": ["linkSupport": false],
             "rename": ["prepareSupport": true],
+            "documentSymbol": ["hierarchicalDocumentSymbolSupport": true],
             "codeAction": [
                 "isPreferredSupport": true,
                 "dataSupport": true,

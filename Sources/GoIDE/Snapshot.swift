@@ -60,6 +60,16 @@ enum Snapshot {
                 await workspace.findReferences(in: document, at: lineStart + column)
                 try? await Task.sleep(for: .milliseconds(400))
             }
+            if let query = value("--snapshot-quickopen"), let workspace {
+                workspace.showQuickOpen()
+                try? await Task.sleep(for: .milliseconds(200))
+                workspace.quickOpenQuery = query
+                try? await Task.sleep(for: .milliseconds(900))
+            }
+            if args.contains("--snapshot-outline"), let workspace {
+                workspace.sidebarMode = .outline
+                try? await Task.sleep(for: .milliseconds(1200))
+            }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()
                 try? await Task.sleep(for: .milliseconds(300))

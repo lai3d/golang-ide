@@ -274,3 +274,38 @@ import GoIDECore
         #expect(FileManager.default.fileExists(atPath: testFile.path))
     }
 }
+
+@MainActor
+@Suite struct WorkspaceNavigationTests {
+    @Test(.enabled(if: GoIDECore.ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
+    func quickOpenFindsFilesAndSymbolsAndOutlineLoads() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-ws-nav-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base.appendingPathComponent("internal/progress"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.canonicalFileURL
+        try "module example.com/nav\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
+        try "package main\n\ntype Greeter struct{}\n\nfunc (Greeter) Hello() {}\n\nfunc main() {}\n"
+            .write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+        try "package main\n".write(to: dir.appendingPathComponent("greet.go"), atomically: true, encoding: .utf8)
+        try "package progress\n".write(to: dir.appendingPathComponent("internal/progress/report.go"), atomically: true, encoding: .utf8)
+
+        let workspace = Workspace()
+        await workspace.openFolder(dir)
+        workspace.showQuickOpen()
+        #expect(workspace.quickOpenItems.map(\.title) == ["main.go"])  // empty query: open tabs
+
+        workspace.quickOpenQuery = "gre"
+        workspace.updateQuickOpen()
+        #expect(workspace.quickOpenItems.first?.title == "greet.go")
+        for _ in 0..<30 where !workspace.quickOpenItems.contains(where: { $0.position != nil }) {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let symbol = try #require(workspace.quickOpenItems.first { $0.title == "Greeter" })
+        workspace.open(symbol)
+        #expect(!workspace.isQuickOpenVisible)
+        #expect(workspace.activeDocument?.revealTarget?.position == TextPosition(line: 2, character: 5))
+
+        await workspace.refreshOutline()
+        #expect(workspace.outline.map(\.name).contains("Greeter"))
+    }
+}

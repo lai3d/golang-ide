@@ -2,17 +2,31 @@
 
 A native macOS IDE for Go, written in Swift (SwiftUI + AppKit).
 
-> Early scaffold — usable for editing small Go projects, not yet a daily driver.
+> Early but usable: editing, navigation and refactoring are backed by gopls. Debugging is next.
 
 ## Features
 
-- Project sidebar (open any Go module folder)
-- NSTextView editor with Go syntax highlighting, auto-indent, find bar, undo
-- **gopls** integration over LSP: live diagnostics as you type, shown as underlines and in the Problems panel (click to jump)
-- **Completion** as you type identifiers or `.` (or press Esc): ↑/↓ to choose, ↩/⇥ to accept; auto-adds imports
-- **Hover** over an identifier for its signature and docs
-- **Go to definition**: ⌘-click or ⌃⌘J, back with ⌃⌘← (stdlib / module files open read-only)
+**Editor**
+- Tabs with independent buffers, undo and scroll; unsaved-changes prompts
+- Go syntax highlighting, line-number gutter with error/warning markers, current-line highlight, auto-indent
+- Format on save (gofmt + organize imports via gopls), Format Document (⌥⇧F)
+
+**Project**
+- Sidebar file tree that follows changes on disk (FSEvents); new/rename/trash from the context menu
+- Open files reload when changed externally (or offer Reload / Keep Mine if you have edits)
+- Find in project (⇧⌘F): match case, whole word, regex
+- Open Quickly (⌘P / ⇧⌘O): fuzzy file finder + workspace symbols; Outline sidebar for the current file
+
+**Language (gopls)**
+- Live diagnostics: underlines, gutter dots, Problems panel
+- Completion with auto-imports, hover docs, signature help while typing calls
+- Jump to definition (⌘-click / ⌃⌘J) and back (⌃⌘←), find references (⇧⌘R)
+- Rename symbol across files (⌃⌘E), quick fixes and refactorings (⌥↩)
+
+**Run**
 - `go build ./...` (⌘B), `go test ./...` (⌘U), `go run .` (⌘R), stop (⌘.) with an Output panel
+
+See [ROADMAP.md](ROADMAP.md) for what's next.
 
 ## Requirements
 
@@ -42,13 +56,6 @@ You can also open `Package.swift` in Xcode.
 | `Tests/GoIDECoreTests` | swift-testing tests |
 | `Examples/hello` | Small Go module for trying things out |
 
-## Roadmap
-
-- Find references, rename, signature help, code actions (gopls)
-- Format on save (gofmt / `textDocument/formatting`)
-- Line-number gutter, tabs for multiple open files
-- tree-sitter-go for incremental highlighting
-- Debugging via Delve's DAP mode (breakpoints, stepping, variables)
 
 ## License
 

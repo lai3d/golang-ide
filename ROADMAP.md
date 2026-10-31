@@ -28,7 +28,7 @@ Estimates are Claude Code session time.
 | 2.2 | ✅ Find references | ⇧⌘R / context menu, results in a References panel | 0.4h |
 | 2.3 | ✅ Rename symbol | `prepareRename` + `textDocument/rename` (⌃⌘E / context menu), WorkspaceEdit across files | 0.4h |
 | 2.4 | ✅ Quick fixes | Code actions at the caret (⌥↩ / context menu): quick fixes, refactorings, source actions | 0.5h |
-| 2.5 | ⬜ Navigation | Quick Open file (⌘P), document outline, go to symbol in workspace (⌘⇧O) | 0.7h |
+| 2.5 | ✅ Navigation | Open Quickly (⌘P / ⇧⌘O): fuzzy files + workspace symbols; Outline sidebar | 0.7h |
 
 ## Phase 3 — Run & debug
 
