@@ -28,16 +28,18 @@ struct ProblemItem: Identifiable {
 @MainActor
 @Observable
 final class Document: Identifiable {
-    let url: URL
+    nonisolated let id = UUID()
+    private(set) var url: URL
     let isReadOnly: Bool
     var text: String
     var isDirty = false
+    /// The file changed on disk while this buffer had unsaved edits.
+    var hasExternalChange = false
     var revealTarget: RevealTarget?
     @ObservationIgnored var version = 1
     /// UTF-16 caret offset, reported by the editor.
     @ObservationIgnored var caretOffset = 0
 
-    nonisolated var id: URL { url }
     var name: String { url.lastPathComponent }
     var isGo: Bool { url.pathExtension == "go" }
 
@@ -45,6 +47,22 @@ final class Document: Identifiable {
         self.url = url
         self.text = text
         self.isReadOnly = isReadOnly
+    }
+
+    func move(to url: URL) {
+        self.url = url
+    }
+}
+
+enum FileOperationError: LocalizedError {
+    case alreadyExists(String)
+    case invalidName(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .alreadyExists(let name): "“\(name)” already exists."
+        case .invalidName(let name): "“\(name)” is not a valid name."
+        }
     }
 }
 
@@ -72,6 +90,7 @@ final class Workspace {
     @ObservationIgnored private var lsp: LSPClient?
     @ObservationIgnored private var lspReady = false
     @ObservationIgnored private var runProcess: Process?
+    @ObservationIgnored private var watcher: DirectoryWatcher?
     @ObservationIgnored private var handledLaunchArguments = false
 
     var currentFile: URL? { activeDocument?.url }
@@ -138,6 +157,7 @@ final class Workspace {
         let url = url.canonicalFileURL
         rootURL = url
         fileTree = FileNode.loadTree(at: url)
+        startWatching(url)
         documents = []
         activeDocument = nil
         diagnostics = [:]
@@ -152,6 +172,152 @@ final class Workspace {
     func reloadTree() {
         guard let rootURL else { return }
         fileTree = FileNode.loadTree(at: rootURL)
+    }
+
+    // MARK: - File system
+
+    private func startWatching(_ root: URL) {
+        watcher?.stop()
+        watcher = DirectoryWatcher(url: root) { paths in
+            Task { @MainActor in self.handleFileSystemChanges(paths) }
+        }
+    }
+
+    /// Reacts to files changed on disk (by us, an external editor, git, go generate…).
+    func handleFileSystemChanges(_ paths: [String]) {
+        let relevant = paths.filter { !isIgnored(path: $0) }
+        guard !relevant.isEmpty else { return }
+        reloadTree()
+        notifyWatchedFiles(relevant)
+        for document in documents { syncWithDisk(document) }
+    }
+
+    /// Hidden files and build/VCS folders inside the project don't matter to us.
+    private func isIgnored(path: String) -> Bool {
+        guard let rootURL else { return true }
+        let root = Self.key(for: rootURL) + "/"
+        guard path.hasPrefix(root) else { return true }
+        return path.dropFirst(root.count).split(separator: "/").contains {
+            $0.hasPrefix(".") || FileNode.ignoredNames.contains(String($0))
+        }
+    }
+
+    private func syncWithDisk(_ document: Document) {
+        // Deleted or unreadable: keep the buffer; saving recreates the file.
+        guard let disk = try? String(contentsOf: document.url, encoding: .utf8) else { return }
+        guard disk != document.text else {
+            document.hasExternalChange = false
+            return
+        }
+        if document.isDirty {
+            document.hasExternalChange = true
+        } else {
+            reloadFromDisk(document, contents: disk)
+        }
+    }
+
+    func reloadFromDisk(_ document: Document, contents: String? = nil) {
+        guard let disk = contents ?? (try? String(contentsOf: document.url, encoding: .utf8)) else { return }
+        replaceText(of: document, with: disk)
+        document.isDirty = false
+        document.hasExternalChange = false
+    }
+
+    func keepLocalVersion(_ document: Document) {
+        document.hasExternalChange = false
+    }
+
+    private func notifyWatchedFiles(_ paths: [String]) {
+        guard lspReady else { return }
+        let goFiles = paths.filter {
+            $0.hasSuffix(".go") || $0.hasSuffix("/go.mod") || $0.hasSuffix("/go.sum") || $0.hasSuffix("/go.work")
+        }
+        let changes: [JSONValue] = goFiles.map { path in
+            let exists = FileManager.default.fileExists(atPath: path)
+            return ["uri": .string(URL(fileURLWithPath: path).absoluteString), "type": .int(exists ? 2 : 3)]
+        }
+        guard !changes.isEmpty else { return }
+        try? lsp?.notify("workspace/didChangeWatchedFiles", params: ["changes": .array(changes)])
+    }
+
+    // MARK: - File operations
+
+    @discardableResult
+    func createFile(named name: String, in directory: URL) throws -> URL {
+        let url = try newItemURL(named: name, in: directory)
+        let contents = url.pathExtension == "go" ? "package \(Self.packageName(for: directory))\n" : ""
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        reloadTree()
+        openFile(url)
+        return url
+    }
+
+    @discardableResult
+    func createFolder(named name: String, in directory: URL) throws -> URL {
+        let url = try newItemURL(named: name, in: directory)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        reloadTree()
+        return url
+    }
+
+    @discardableResult
+    func renameItem(at url: URL, to newName: String) throws -> URL {
+        let oldKey = Self.key(for: url)
+        let target = try newItemURL(named: newName, in: url.deletingLastPathComponent())
+        try FileManager.default.moveItem(at: url, to: target)
+        let newKey = Self.key(for: target)
+        for document in documents {
+            let key = Self.key(for: document.url)
+            guard key == oldKey || key.hasPrefix(oldKey + "/") else { continue }
+            sendDidClose(document)
+            document.move(to: URL(fileURLWithPath: newKey + key.dropFirst(oldKey.count)))
+            sendDidOpen(document)
+        }
+        dropDiagnostics(under: oldKey)
+        reloadTree()
+        return target
+    }
+
+    /// Moves a file or folder to the Trash, closing (and discarding) any open documents inside it.
+    func trashItem(at url: URL) throws {
+        let key = Self.key(for: url)
+        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        remove(documents.filter {
+            let docKey = Self.key(for: $0.url)
+            return docKey == key || docKey.hasPrefix(key + "/")
+        })
+        dropDiagnostics(under: key)
+        reloadTree()
+    }
+
+    private func newItemURL(named name: String, in directory: URL) throws -> URL {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.contains("/"), name != ".", name != ".." else {
+            throw FileOperationError.invalidName(name)
+        }
+        let url = directory.appendingPathComponent(name)
+        guard !FileManager.default.fileExists(atPath: url.path) else { throw FileOperationError.alreadyExists(name) }
+        return url
+    }
+
+    private func dropDiagnostics(under key: String) {
+        for path in diagnostics.keys where path == key || path.hasPrefix(key + "/") {
+            diagnostics.removeValue(forKey: path)
+        }
+    }
+
+    /// The package clause of a sibling .go file, else a name derived from the folder.
+    static func packageName(for directory: URL) -> String {
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.pathExtension == "go" && !file.lastPathComponent.hasSuffix("_test.go") {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for line in text.split(separator: "\n") where line.hasPrefix("package ") {
+                return String(line.dropFirst("package ".count)).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        let name = directory.lastPathComponent.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "_" }
+        guard let first = name.first, !first.isNumber else { return "main" }
+        return name
     }
 
     // MARK: - Documents
@@ -508,7 +674,11 @@ final class Workspace {
                 ]]],
             ],
         ]
-        let workspace: JSONValue = ["configuration": true, "workspaceFolders": true]
+        let workspace: JSONValue = [
+            "configuration": true,
+            "workspaceFolders": true,
+            "didChangeWatchedFiles": ["dynamicRegistration": false],
+        ]
         return [
             "processId": .int(Int(ProcessInfo.processInfo.processIdentifier)),
             "clientInfo": ["name": "GoIDE", "version": "0.1.0"],

@@ -17,7 +17,7 @@ Estimates are Claude Code session time.
 | 1.1 | ✅ Line-number gutter | Ruler with line numbers, current-line highlight, error/warning markers | 0.3h |
 | 1.2 | ✅ Tabs | Multiple open files; each keeps its own buffer, undo, scroll, dirty state; ⌘W closes, ⌃⇥ cycles | 0.7h |
 | 1.3 | ✅ Format on save | gopls `textDocument/formatting` + organize imports; manual ⌥⇧F, toggle in Go menu | 0.4h |
-| 1.4 | ⬜ File system | Watch the folder (FSEvents) to refresh the tree and reload unmodified open files; new file/folder, rename, move to Trash | 0.6h |
+| 1.4 | ✅ File system | Watch the folder (FSEvents) to refresh the tree and reload unmodified open files; new file/folder, rename, move to Trash | 0.6h |
 | 1.5 | ⬜ Find in project | ⌘⇧F search panel (literal / regex, case), results grouped by file, click to jump | 0.5h |
 
 ## Phase 2 — Language intelligence

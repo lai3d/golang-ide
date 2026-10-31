@@ -71,11 +71,58 @@ struct FileTreeView: View {
         List(workspace.fileTree, children: \.children, selection: selection) { node in
             Label(node.name, systemImage: Self.icon(for: node))
                 .lineLimit(1)
+                .contextMenu { itemMenu(for: node) }
         }
         .listStyle(.sidebar)
         .contextMenu {
-            Button("Reload") { workspace.reloadTree() }
+            if let root = workspace.rootURL {
+                Button("New File…") { newFile(in: root) }
+                Button("New Folder…") { newFolder(in: root) }
+                Divider()
+                Button("Reload") { workspace.reloadTree() }
+            }
         }
+    }
+
+    @ViewBuilder
+    private func itemMenu(for node: FileNode) -> some View {
+        let folder = node.isDirectory ? node.url : node.url.deletingLastPathComponent()
+        Button("New File…") { newFile(in: folder) }
+        Button("New Folder…") { newFolder(in: folder) }
+        Divider()
+        Button("Rename…") { rename(node) }
+        Button("Move to Trash") { trash(node) }
+        Divider()
+        Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([node.url]) }
+        Button("Copy Path") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(node.url.path, forType: .string)
+        }
+    }
+
+    private func newFile(in folder: URL) {
+        guard let name = Prompt.text(title: "New File", message: "In \(folder.lastPathComponent)",
+                                     initial: "untitled.go", confirm: "Create") else { return }
+        Prompt.attempt { try workspace.createFile(named: name, in: folder) }
+    }
+
+    private func newFolder(in folder: URL) {
+        guard let name = Prompt.text(title: "New Folder", message: "In \(folder.lastPathComponent)",
+                                     initial: "", confirm: "Create") else { return }
+        Prompt.attempt { try workspace.createFolder(named: name, in: folder) }
+    }
+
+    private func rename(_ node: FileNode) {
+        guard let name = Prompt.text(title: "Rename “\(node.name)”", initial: node.name, confirm: "Rename"),
+              name != node.name else { return }
+        Prompt.attempt { try workspace.renameItem(at: node.url, to: name) }
+    }
+
+    private func trash(_ node: FileNode) {
+        guard Prompt.confirm(title: "Move “\(node.name)” to the Trash?",
+                             message: "Open tabs for it are closed without saving.",
+                             confirm: "Move to Trash") else { return }
+        Prompt.attempt { try workspace.trashItem(at: node.url) }
     }
 
     private static func icon(for node: FileNode) -> String {
@@ -97,6 +144,9 @@ struct EditorArea: View {
             VStack(spacing: 0) {
                 TabBar()
                 Divider()
+                if let document = workspace.activeDocument, document.hasExternalChange {
+                    ExternalChangeBanner(document: document)
+                }
                 ZStack {
                     // Every open document keeps a live editor (undo, scroll, selection);
                     // only the active one is shown.
@@ -115,6 +165,27 @@ struct EditorArea: View {
             BottomPanel()
                 .frame(minHeight: 100, idealHeight: 180)
         }
+    }
+}
+
+struct ExternalChangeBanner: View {
+    @Environment(Workspace.self) private var workspace
+    let document: Document
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+            Text("“\(document.name)” changed on disk, and you have unsaved changes.")
+                .font(.callout)
+            Spacer()
+            Button("Reload from Disk") { workspace.reloadFromDisk(document) }
+            Button("Keep My Version") { workspace.keepLocalVersion(document) }
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.yellow.opacity(0.12))
+        .overlay(alignment: .bottom) { Divider() }
     }
 }
 
