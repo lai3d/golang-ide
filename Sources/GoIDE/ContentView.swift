@@ -261,6 +261,7 @@ struct DocumentEditor: View {
                 semanticTokens: { await workspace.semanticTokens(in: document) },
                 definition: { offset in Task { await workspace.jumpToDefinition(from: document, at: offset) } },
                 references: { offset in Task { await workspace.findReferences(in: document, at: offset) } },
+                callHierarchy: { offset in Task { await workspace.showCallHierarchy(in: document, at: offset) } },
                 rename: { offset in Task { await workspace.promptRename(in: document, at: offset) } },
                 codeActions: { await workspace.codeActions(in: document, at: $0, length: $1) },
                 performAction: { action in Task { await workspace.perform(action) } },
@@ -379,6 +380,7 @@ struct BottomPanel: View {
                 Picker("Panel", selection: $workspace.bottomTab) {
                     Text("Problems (\(workspace.allProblems.count))").tag(BottomTab.problems)
                     Text("References").tag(BottomTab.references)
+                    Text("Calls").tag(BottomTab.calls)
                     Text(testsLabel).tag(BottomTab.tests)
                     Text("Debug").tag(BottomTab.debug)
                     Text("Output").tag(BottomTab.output)
@@ -400,6 +402,7 @@ struct BottomPanel: View {
             switch workspace.bottomTab {
             case .problems: ProblemsList()
             case .references: ReferencesList()
+            case .calls: CallsPanel()
             case .tests: TestsPanel()
             case .debug: DebugPanel()
             case .output: OutputView()

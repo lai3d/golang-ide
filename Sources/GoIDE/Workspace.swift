@@ -3,7 +3,28 @@ import GoIDECore
 import Observation
 
 enum BottomTab: Hashable {
-    case problems, references, tests, debug, output
+    case problems, references, calls, tests, debug, output
+}
+
+enum CallDirection: Hashable {
+    case incoming, outgoing
+}
+
+/// A node in the Calls panel; children (the next level of callers/callees) load on expand.
+@MainActor
+@Observable
+final class CallNode: Identifiable {
+    let id = UUID()
+    let item: CallHierarchyItem
+    /// Where this call happens (caller's file for incoming, root item's file for outgoing).
+    let callSite: (uri: String, position: TextPosition)?
+    var children: [CallNode]?
+    var isExpanded = false
+
+    init(item: CallHierarchyItem, callSite: (uri: String, position: TextPosition)? = nil) {
+        self.item = item
+        self.callSite = callSite
+    }
 }
 
 enum TestScope: Equatable {
@@ -146,6 +167,10 @@ final class Workspace {
     private(set) var breakpoints: [String: Set<Int>] = [:]
     private(set) var debugSession: DebugSession?
     private(set) var executionLocation: ExecutionLocation?
+
+    // Call hierarchy
+    private(set) var callRoot: CallNode?
+    var callDirection: CallDirection = .incoming
 
     // Find references
     private(set) var referenceResults: [SearchFileResult] = []
@@ -893,6 +918,56 @@ final class Workspace {
         return changed
     }
 
+    // MARK: - Call hierarchy
+
+    func showCallHierarchy(in document: Document, at offset: Int) async {
+        guard case let (lsp, params)? = positionRequest(document, at: offset),
+              let result = try? await lsp.request("textDocument/prepareCallHierarchy", params: params),
+              let item = CallHierarchyItem.parseAll(result).first
+        else {
+            flashStatus("No function here")
+            return
+        }
+        let root = CallNode(item: item)
+        callRoot = root
+        bottomTab = .calls
+        await expand(root)
+    }
+
+    func setCallDirection(_ direction: CallDirection) async {
+        guard direction != callDirection else { return }
+        callDirection = direction
+        guard let root = callRoot else { return }
+        let fresh = CallNode(item: root.item)
+        callRoot = fresh
+        await expand(fresh)
+    }
+
+    /// Loads the callers (incoming) or callees (outgoing) of a node.
+    func expand(_ node: CallNode) async {
+        node.isExpanded = true
+        guard node.children == nil, let lsp else { return }
+        let method = callDirection == .incoming ? "callHierarchy/incomingCalls" : "callHierarchy/outgoingCalls"
+        guard let result = try? await lsp.request(method, params: ["item": node.item.raw]) else {
+            node.children = []
+            return
+        }
+        node.children = CallHierarchyCall.parseAll(result).map { call in
+            // Incoming: sites are in the caller's file. Outgoing: in this node's file.
+            let uri = callDirection == .incoming ? call.item.uri : node.item.uri
+            return CallNode(item: call.item, callSite: call.callSites.first.map { (uri, $0) })
+        }
+    }
+
+    /// Jumps to the call site if known, else to the function itself.
+    func open(_ node: CallNode) {
+        if let site = node.callSite, let url = URL(string: site.uri) {
+            navigate(to: URL(fileURLWithPath: url.path), position: site.position)
+        } else if let url = URL(string: node.item.uri) {
+            navigate(to: URL(fileURLWithPath: url.path), position: node.item.position)
+        }
+    }
+
     func jumpToDefinition(from document: Document, at offset: Int) async {
         guard case let (lsp, params)? = positionRequest(document, at: offset) else { return }
         let origin = LineIndex(document.text).position(of: offset)
@@ -1101,6 +1176,7 @@ final class Workspace {
             ]],
             "definition": ["linkSupport": false],
             "documentHighlight": ["dynamicRegistration": false],
+            "callHierarchy": ["dynamicRegistration": false],
             "inlayHint": ["dynamicRegistration": false],
             "semanticTokens": [
                 "requests": ["full": true, "range": false],

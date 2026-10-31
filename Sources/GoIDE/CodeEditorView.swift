@@ -12,6 +12,7 @@ struct EditorServices {
     var semanticTokens: @MainActor () async -> [SemanticToken]
     var definition: @MainActor (Int) -> Void
     var references: @MainActor (Int) -> Void
+    var callHierarchy: @MainActor (Int) -> Void
     var rename: @MainActor (Int) -> Void
     var codeActions: @MainActor (_ offset: Int, _ length: Int) async -> [CodeAction]
     var performAction: @MainActor (CodeAction) -> Void
@@ -751,6 +752,7 @@ struct CodeEditorView: NSViewRepresentable {
             return [
                 ActionMenuItem(title: "Jump to Definition") { [weak self] in self?.parent.services.definition(offset) },
                 ActionMenuItem(title: "Find References") { [weak self] in self?.parent.services.references(offset) },
+                ActionMenuItem(title: "Call Hierarchy") { [weak self] in self?.parent.services.callHierarchy(offset) },
                 ActionMenuItem(title: "Rename Symbol…") { [weak self] in self?.parent.services.rename(offset) },
                 ActionMenuItem(title: "Quick Fix…") { [weak self] in
                     DispatchQueue.main.async { self?.showQuickFixes() }  // after this menu closes

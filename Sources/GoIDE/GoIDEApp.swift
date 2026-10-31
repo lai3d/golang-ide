@@ -92,6 +92,12 @@ struct GoIDEApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(!workspace.isGoFile)
+                Button("Call Hierarchy") {
+                    guard let document = workspace.activeDocument else { return }
+                    Task { await workspace.showCallHierarchy(in: document, at: document.caretOffset) }
+                }
+                .keyboardShortcut("h", modifiers: [.control, .option])
+                .disabled(!workspace.isGoFile)
                 Button("Go Back") { workspace.goBack() }
                     .keyboardShortcut(.leftArrow, modifiers: [.control, .command])
                     .disabled(!workspace.canGoBack)

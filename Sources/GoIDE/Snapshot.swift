@@ -98,6 +98,12 @@ enum Snapshot {
                 }
                 try? await Task.sleep(for: .milliseconds(800))
             }
+            if let direction = value("--snapshot-calls"), let workspace, let document = workspace.activeDocument {
+                await workspace.showCallHierarchy(in: document, at: document.caretOffset)
+                if direction == "out" { await workspace.setCallDirection(.outgoing) }
+                if let first = workspace.callRoot?.children?.first { await workspace.expand(first) }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()
                 try? await Task.sleep(for: .milliseconds(300))
