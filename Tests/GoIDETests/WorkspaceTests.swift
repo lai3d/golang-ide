@@ -298,9 +298,10 @@ import GoIDECore
         workspace.updateQuickOpen()
         #expect(workspace.quickOpenItems.first?.title == "greet.go")
         // gopls may still be loading packages on a cold (CI) start: re-ask, as typing would.
-        for _ in 0..<30 where !workspace.quickOpenItems.contains(where: { $0.position != nil }) {
-            try await Task.sleep(for: .milliseconds(500))
-            workspace.updateQuickOpen()
+        // (Each re-ask cancels the request in flight, so leave it time to answer.)
+        for _ in 0..<12 where !workspace.quickOpenItems.contains(where: { $0.position != nil }) {
+            try await Task.sleep(for: .milliseconds(1500))
+            if !workspace.quickOpenItems.contains(where: { $0.position != nil }) { workspace.updateQuickOpen() }
         }
         let symbol = try #require(workspace.quickOpenItems.first { $0.title == "Greeter" })
         workspace.open(symbol)
