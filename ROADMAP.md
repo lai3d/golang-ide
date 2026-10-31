@@ -76,7 +76,7 @@ Released so far: [v0.1.0](https://github.com/lai3d/golang-ide/releases/tag/v0.1.
 
 ## Phase 7 — Productivity
 
-Released so far: [v0.2.0](https://github.com/lai3d/golang-ide/releases/tag/v0.2.0) (phases 1–6).
+Released in [v0.3.0](https://github.com/lai3d/golang-ide/releases/tag/v0.3.0) (phases 1–7).
 
 | # | Item | Notes | Est. |
 |---|---|---|---|
