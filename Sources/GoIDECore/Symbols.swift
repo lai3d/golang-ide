@@ -12,17 +12,34 @@ public struct SymbolNode: Sendable, Hashable, Identifiable {
     public let uri: String?
     /// Where to put the caret: the symbol's name.
     public let position: TextPosition
+    /// The whole declaration (e.g. a function including its body).
+    public let rangeStart: TextPosition
+    public let rangeEnd: TextPosition
     /// `nil` when there are none, so outline views show no disclosure triangle.
     public let children: [SymbolNode]?
 
     public init(name: String, detail: String? = nil, kind: Int, uri: String? = nil,
-                position: TextPosition, children: [SymbolNode]? = nil) {
+                position: TextPosition, rangeStart: TextPosition? = nil, rangeEnd: TextPosition? = nil,
+                children: [SymbolNode]? = nil) {
         self.name = name
         self.detail = detail
         self.kind = kind
         self.uri = uri
         self.position = position
+        self.rangeStart = rangeStart ?? position
+        self.rangeEnd = rangeEnd ?? position
         self.children = children
+    }
+
+    public func contains(_ p: TextPosition) -> Bool {
+        (rangeStart.line, rangeStart.character) <= (p.line, p.character)
+            && (p.line, p.character) <= (rangeEnd.line, rangeEnd.character)
+    }
+
+    /// The chain of nested symbols containing `position` (outermost first).
+    public static func path(in symbols: [SymbolNode], at position: TextPosition) -> [SymbolNode] {
+        guard let match = symbols.first(where: { $0.contains(position) }) else { return [] }
+        return [match] + path(in: match.children ?? [], at: position)
     }
 
     /// Parses `DocumentSymbol[]` (hierarchical) or `SymbolInformation[]` / `WorkspaceSymbol[]` (flat).
@@ -36,6 +53,7 @@ public struct SymbolNode: Sendable, Hashable, Identifiable {
         let location = value["location"]
         let range = value["selectionRange"] ?? value["range"] ?? location?["range"]
         let position = TextPosition(json: range?["start"]) ?? TextPosition(line: 0, character: 0)
+        let full = value["range"] ?? location?["range"]
         let children = value["children"]?.arrayValue?.compactMap(parse)
         return SymbolNode(
             name: name,
@@ -43,6 +61,8 @@ public struct SymbolNode: Sendable, Hashable, Identifiable {
             kind: kind,
             uri: location?["uri"]?.stringValue,
             position: position,
+            rangeStart: TextPosition(json: full?["start"]),
+            rangeEnd: TextPosition(json: full?["end"]),
             children: (children?.isEmpty ?? true) ? nil : children)
     }
 }

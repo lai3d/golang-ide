@@ -245,6 +245,10 @@ struct EditorArea: View {
                 if let document = workspace.activeDocument, document.hasExternalChange {
                     ExternalChangeBanner(document: document)
                 }
+                if let document = workspace.activeDocument, workspace.diffDocumentID != document.id {
+                    BreadcrumbBar(document: document)
+                    Divider()
+                }
                 ZStack {
                     // Every open document keeps a live editor (undo, scroll, selection);
                     // only the active one is shown.

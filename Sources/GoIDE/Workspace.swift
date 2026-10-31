@@ -101,7 +101,14 @@ final class Document: Identifiable {
     var revealTarget: RevealTarget?
     @ObservationIgnored var version = 1
     /// UTF-16 caret offset, reported by the editor.
-    @ObservationIgnored var caretOffset = 0
+    @ObservationIgnored var caretOffset = 0 {
+        didSet {
+            // Observable line/column for the breadcrumbs (only when the line changes or it's cheap).
+            let position = LineIndex(text).position(of: caretOffset)
+            if position != caretPosition { caretPosition = position }
+        }
+    }
+    private(set) var caretPosition = TextPosition(line: 0, character: 0)
 
     var name: String { url.lastPathComponent }
     var isGo: Bool { url.pathExtension == "go" }
