@@ -62,6 +62,33 @@ enum RefactorKind: String, CaseIterable, Hashable {
     }
 }
 
+struct RenameError: Error {
+    let message: String
+    init(_ message: String) { self.message = message }
+}
+
+/// A rename computed by gopls, shown for review before it is applied.
+struct RenamePreview: Identifiable {
+    struct File: Identifiable {
+        let uri: String
+        let path: String
+        let edits: [TextEdit]
+        let hunks: [EditPreviewHunk]
+        var id: String { uri }
+    }
+
+    let id = UUID()
+    let oldName: String
+    let newName: String
+    let files: [File]
+    /// Buffer versions when gopls computed the edit.
+    let versions: [UUID: Int]
+    /// Files the user unchecked.
+    var excluded: Set<String> = []
+
+    var occurrenceCount: Int { files.reduce(0) { $0 + $1.edits.count } }
+}
+
 struct RefactorRequest: Equatable {
     let id = UUID()
     let kind: RefactorKind
@@ -259,6 +286,7 @@ final class Workspace {
     private(set) var quickFixRequest = 0
     private(set) var foldRequest: FoldRequest?
     private(set) var refactorRequest: RefactorRequest?
+    var renamePreview: RenamePreview?
     private(set) var editRequest: EditRequest?
 
     func requestEdit(_ action: EditAction) {
@@ -1125,44 +1153,93 @@ final class Workspace {
         return (document.text as NSString).substring(with: LineIndex(document.text).range(from: start, to: end))
     }
 
-    /// Renames the symbol at `offset` across the workspace. Returns an error message, or nil.
-    @discardableResult
-    func renameSymbol(in document: Document, at offset: Int, to newName: String) async -> String? {
+    /// Asks gopls for the rename edit (not applied). Fails with a message.
+    private func renameEdit(in document: Document, at offset: Int, to newName: String) async
+        -> Result<(WorkspaceEdit, [UUID: Int]), RenameError> {
         guard case let (lsp, .object(params))? = positionRequest(document, at: offset) else {
-            return "gopls is not ready"
+            return .failure(RenameError("gopls is not ready"))
         }
         var request = params
         request["newName"] = .string(newName)
         let versions = Dictionary(documents.map { ($0.id, $0.version) }, uniquingKeysWith: { $1 })
-        let result: JSONValue
         do {
-            result = try await lsp.request("textDocument/rename", params: .object(request))
+            let result = try await lsp.request("textDocument/rename", params: .object(request))
+            return .success((WorkspaceEdit.parse(result), versions))
         } catch {
-            return error.localizedDescription
+            return .failure(RenameError(error.localizedDescription))
         }
+    }
+
+    /// Applies a rename edit unless a buffer changed since gopls computed it.
+    @discardableResult
+    private func applyRename(_ edit: WorkspaceEdit, versions: [UUID: Int], newName: String) -> String? {
         // Edits are relative to what gopls saw; bail out if a buffer changed meanwhile.
         guard documents.allSatisfy({ versions[$0.id] == nil || versions[$0.id] == $0.version }) else {
             return "The file changed while renaming; try again."
         }
-        let changed = apply(WorkspaceEdit.parse(result))
+        let changed = apply(edit)
         flashStatus("Renamed to ‘\(newName)’ in \(changed) file\(changed == 1 ? "" : "s")")
         return nil
     }
 
-    /// Asks for a new name, then renames (⌃⌘E / context menu).
+    /// Renames the symbol at `offset` across the workspace. Returns an error message, or nil.
+    @discardableResult
+    func renameSymbol(in document: Document, at offset: Int, to newName: String) async -> String? {
+        switch await renameEdit(in: document, at: offset, to: newName) {
+        case .failure(let error): return error.message
+        case .success(let (edit, versions)): return applyRename(edit, versions: versions, newName: newName)
+        }
+    }
+
+    /// Asks for a new name, then renames (⌃⌘E / context menu) — or previews the changes first.
     func promptRename(in document: Document, at offset: Int) async {
         guard let current = await prepareRename(in: document, at: offset) else {
             flashStatus("Nothing to rename here")
             return
         }
-        guard let newName = Prompt.text(title: "Rename ‘\(current)’", message: "All references are updated.",
-                                        initial: current, confirm: "Rename"),
+        guard let (newName, preview) = Prompt.rename(title: "Rename ‘\(current)’", message: "All references are updated.",
+                                                     initial: current),
               newName != current else { return }
-        if let error = await renameSymbol(in: document, at: offset, to: newName) {
-            let alert = NSAlert()
-            alert.messageText = "Couldn't rename ‘\(current)’"
-            alert.informativeText = error
-            alert.runModal()
+        if preview {
+            await previewRename(in: document, at: offset, from: current, to: newName)
+        } else if let error = await renameSymbol(in: document, at: offset, to: newName) {
+            showRenameError(error, name: current)
+        }
+    }
+
+    private func showRenameError(_ message: String, name: String) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn't rename ‘\(name)’"
+        alert.informativeText = message
+        alert.runModal()
+    }
+
+    func previewRename(in document: Document, at offset: Int, from oldName: String, to newName: String) async {
+        let (edit, versions): (WorkspaceEdit, [UUID: Int])
+        switch await renameEdit(in: document, at: offset, to: newName) {
+        case .failure(let error): return showRenameError(error.message, name: oldName)
+        case .success(let value): (edit, versions) = value
+        }
+        let files: [RenamePreview.File] = edit.changes.compactMap { uri, edits in
+            guard !edits.isEmpty, let url = URL(string: uri), url.isFileURL else { return nil }
+            let key = Self.key(for: url)
+            let text = documents.first(where: { Self.key(for: $0.url) == key })?.text
+                ?? (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            return RenamePreview.File(uri: uri, path: displayPath(key), edits: edits,
+                                      hunks: EditPreview.hunks(edits, in: text))
+        }
+        .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        renamePreview = RenamePreview(oldName: oldName, newName: newName, files: files, versions: versions)
+    }
+
+    /// Applies the previewed rename to the files still checked.
+    func applyRenamePreview() {
+        guard let preview = renamePreview else { return }
+        renamePreview = nil
+        var changes: [String: [TextEdit]] = [:]
+        for file in preview.files where !preview.excluded.contains(file.uri) { changes[file.uri] = file.edits }
+        if let error = applyRename(WorkspaceEdit(changes: changes), versions: preview.versions, newName: preview.newName) {
+            showRenameError(error, name: preview.oldName)
         }
     }
 

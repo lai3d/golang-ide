@@ -96,3 +96,40 @@ public enum TextDiff {
         return (range, text)
     }
 }
+
+/// One changed span of lines, before and after a set of edits (for previews).
+public struct EditPreviewHunk: Sendable, Hashable, Identifiable {
+    /// 0-based first line in the original text.
+    public let line: Int
+    public let before: String
+    public let after: String
+    public var id: Int { line }
+}
+
+public enum EditPreview {
+    /// Groups `edits` into the line spans they touch and renders each span before and after.
+    public static func hunks(_ edits: [TextEdit], in text: String) -> [EditPreviewHunk] {
+        let lines = text.components(separatedBy: "\n")
+        var spans: [(first: Int, last: Int, edits: [TextEdit])] = []
+        for edit in edits.sorted(by: { ($0.start.line, $0.start.character) < ($1.start.line, $1.start.character) }) {
+            if var span = spans.last, edit.start.line <= span.last {
+                span.last = max(span.last, edit.end.line)
+                span.edits.append(edit)
+                spans[spans.count - 1] = span
+            } else {
+                spans.append((edit.start.line, edit.end.line, [edit]))
+            }
+        }
+        return spans.compactMap { span in
+            guard span.first < lines.count else { return nil }
+            let last = min(span.last, lines.count - 1)
+            let before = lines[span.first...last].joined(separator: "\n")
+            let shifted = span.edits.map {
+                TextEdit(start: TextPosition(line: $0.start.line - span.first, character: $0.start.character),
+                         end: TextPosition(line: $0.end.line - span.first, character: $0.end.character),
+                         newText: $0.newText)
+            }
+            return EditPreviewHunk(line: span.first, before: before, after: TextEdit.apply(shifted, to: before))
+        }
+    }
+}

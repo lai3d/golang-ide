@@ -55,6 +55,9 @@ struct ContentView: View {
             }
         }
         .task { await workspace.handleLaunchArguments() }
+        .sheet(item: Binding(get: { workspace.renamePreview }, set: { workspace.renamePreview = $0 })) { preview in
+            RenamePreviewView(preview: preview).environment(workspace)
+        }
         .sheet(isPresented: Binding(get: { workspace.isEditingRunConfigurations },
                                     set: { workspace.isEditingRunConfigurations = $0 })) {
             RunConfigurationsSheet().environment(workspace)

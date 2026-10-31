@@ -23,6 +23,29 @@ enum Prompt {
         return value.isEmpty && !allowEmpty ? nil : value
     }
 
+    /// Rename dialog: returns the new name and whether to preview first (Preview… button).
+    static func rename(title: String, message: String, initial: String) -> (String, preview: Bool)? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Preview…")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.stringValue = initial
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        DispatchQueue.main.async { field.currentEditor()?.selectAll(nil) }
+        let response = alert.runModal()
+        let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        switch response {
+        case .alertFirstButtonReturn: return (value, false)
+        case .alertThirdButtonReturn: return (value, true)
+        default: return nil
+        }
+    }
+
     static func confirm(title: String, message: String, confirm: String) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning

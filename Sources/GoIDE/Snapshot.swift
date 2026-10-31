@@ -52,6 +52,16 @@ enum Snapshot {
                 let length = value("--snapshot-select").flatMap(Int.init) ?? 0
                 textView.setSelectedRange(NSRange(location: end, length: min(length, ns.length - end)))
                 try? await Task.sleep(for: .milliseconds(900))  // let caret-driven requests land
+                if let newName = value("--snapshot-rename"), let workspace = Workspace.current,
+                   let document = workspace.activeDocument,
+                   let current = await workspace.prepareRename(in: document, at: textView.selectedRange().location) {
+                    await workspace.previewRename(in: document, at: textView.selectedRange().location, from: current, to: newName)
+                    try? await Task.sleep(for: .milliseconds(800))
+                    if args.contains("--snapshot-apply") {
+                        workspace.applyRenamePreview()
+                        try? await Task.sleep(for: .milliseconds(500))
+                    }
+                }
                 if let name = value("--snapshot-refactor"),
                    let kind = RefactorKind.allCases.first(where: { $0.rawValue.hasSuffix(name) }) {
                     Workspace.current?.requestRefactor(kind)
