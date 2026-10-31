@@ -222,6 +222,34 @@ public enum GoIdentifier {
         return i
     }
 
+    /// Start of the callee expression (e.g. `fmt.Printf`) for the call whose argument
+    /// list contains `offset`: finds the unmatched "(" before it. Nil if not in a call.
+    public static func callStart(in text: NSString, before offset: Int, lookback: Int = 4000) -> Int? {
+        var depth = 0
+        var i = min(offset, text.length) - 1
+        let limit = max(0, offset - lookback)
+        while i >= limit {
+            switch text.character(at: i) {
+            case 0x29: depth += 1  // )
+            case 0x28:  // (
+                if depth == 0 {
+                    var start = prefixStart(in: text, before: i)
+                    // Include qualifiers: pkg.Func, x.y.Method
+                    while start > 1, text.character(at: start - 1) == 0x2E {
+                        let qualifier = prefixStart(in: text, before: start - 1)
+                        guard qualifier < start - 1 else { break }
+                        start = qualifier
+                    }
+                    return start
+                }
+                depth -= 1
+            default: break
+            }
+            i -= 1
+        }
+        return nil
+    }
+
     /// Range of the identifier containing the character at `index`, if any.
     public static func wordRange(in text: NSString, at index: Int) -> NSRange? {
         guard index >= 0, index < text.length, isIdentifier(text.character(at: index)) else { return nil }

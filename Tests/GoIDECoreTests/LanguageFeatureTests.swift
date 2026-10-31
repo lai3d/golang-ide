@@ -77,6 +77,14 @@ import Testing
 }
 
 @Suite struct GoIdentifierTests {
+    @Test func findsCallStart() {
+        let text = "\tfmt.Printf(\"%d\", len(xs), " as NSString
+        #expect(GoIdentifier.callStart(in: text, before: text.length) == 1)  // fmt.Printf, skipping len(xs)
+        let inner = "x := strings.ToUpper(s.Trim(" as NSString
+        #expect(GoIdentifier.callStart(in: inner, before: inner.length) == 21)  // s.Trim
+        #expect(GoIdentifier.callStart(in: "a + b" as NSString, before: 5) == nil)
+    }
+
     @Test func findsPrefixAndWords() {
         let text = "\tfmt.Prin x1 42" as NSString
         #expect(GoIdentifier.prefixStart(in: text, before: 9) == 5)  // "Prin"

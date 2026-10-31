@@ -24,7 +24,7 @@ Estimates are Claude Code session time.
 
 | # | Item | Notes | Est. |
 |---|---|---|---|
-| 2.1 | ⬜ Signature help | Parameter hints while typing a call (`(` / `,`) | 0.4h |
+| 2.1 | ✅ Signature help | Parameter hints while typing a call (`(` / `,`) | 0.4h |
 | 2.2 | ⬜ Find references | ⇧⌘R / context menu, results in a References panel | 0.4h |
 | 2.3 | ⬜ Rename symbol | `textDocument/rename`, apply WorkspaceEdit across files | 0.4h |
 | 2.4 | ⬜ Quick fixes | Code actions for diagnostics (⌘.) — e.g. add import, fill struct | 0.5h |

@@ -227,6 +227,7 @@ struct DocumentEditor: View {
             services: EditorServices(
                 completions: { await workspace.completions(in: document, at: $0) },
                 hover: { await workspace.hover(in: document, at: $0) },
+                signatureHelp: { await workspace.signatureHelp(in: document, at: $0) },
                 definition: { offset in Task { await workspace.jumpToDefinition(from: document, at: offset) } },
                 caretMoved: { document.caretOffset = $0 }),
             onChange: { workspace.updateText(of: document, to: $0) })

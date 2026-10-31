@@ -536,6 +536,13 @@ final class Workspace {
         return HoverContent.parse(result).map { String($0.prefix(4000)) }
     }
 
+    func signatureHelp(in document: Document, at offset: Int) async -> SignatureHelp? {
+        guard case let (lsp, params)? = positionRequest(document, at: offset),
+              let result = try? await lsp.request("textDocument/signatureHelp", params: params)
+        else { return nil }
+        return SignatureHelp.parse(result)
+    }
+
     func jumpToDefinition(from document: Document, at offset: Int) async {
         guard case let (lsp, params)? = positionRequest(document, at: offset) else { return }
         let origin = LineIndex(document.text).position(of: offset)
@@ -731,6 +738,11 @@ final class Workspace {
                 "completionItem": ["snippetSupport": false, "documentationFormat": ["markdown", "plaintext"]],
             ],
             "hover": ["contentFormat": ["markdown", "plaintext"]],
+            "signatureHelp": ["signatureInformation": [
+                "documentationFormat": ["plaintext", "markdown"],
+                "parameterInformation": ["labelOffsetSupport": true],
+                "activeParameterSupport": true,
+            ]],
             "definition": ["linkSupport": false],
             "formatting": ["dynamicRegistration": false],
             "codeAction": [

@@ -6,6 +6,7 @@ import SwiftUI
 struct EditorServices {
     var completions: @MainActor (Int) async -> [CompletionItem]
     var hover: @MainActor (Int) async -> String?
+    var signatureHelp: @MainActor (Int) async -> SignatureHelp?
     var definition: @MainActor (Int) -> Void
     var caretMoved: @MainActor (Int) -> Void
 }
@@ -142,6 +143,9 @@ struct CodeEditorView: NSViewRepresentable {
         private var isApplyingCompletion = false
         private var isApplyingExternalChange = false
 
+        private let signaturePopup = SignaturePopup()
+        private var signatureTask: Task<Void, Never>?
+
         private var hoverTask: Task<Void, Never>?
         private var hoverWord: NSRange?
         private var hoverPopover: NSPopover?
@@ -170,6 +174,13 @@ struct CodeEditorView: NSViewRepresentable {
             lastReplacement = nil
             guard parent.highlightGo, !isApplyingCompletion, !isApplyingExternalChange else { return }
 
+            // Parameter hints: open on "(" / ",", follow edits while open.
+            if typed == "(" || typed == "," {
+                scheduleSignatureHelp(after: .zero)
+            } else if signaturePopup.isVisible {
+                scheduleSignatureHelp(after: .milliseconds(80))
+            }
+
             if let typed, typed.utf16.count == 1, let unit = typed.utf16.first,
                unit == 0x2E || GoIdentifier.isIdentifier(unit) {
                 if unit == 0x2E {  // "." starts a fresh member completion
@@ -192,6 +203,7 @@ struct CodeEditorView: NSViewRepresentable {
             guard let textView else { return }
             parent.services.caretMoved(textView.selectedRange().location)
             ruler?.needsDisplay = true
+            if signaturePopup.isVisible { scheduleSignatureHelp(after: .milliseconds(80)) }
         }
 
         // MARK: Keys
@@ -222,6 +234,11 @@ struct CodeEditorView: NSViewRepresentable {
                 default:
                     hideCompletions()
                 }
+            }
+
+            if selector == #selector(NSResponder.cancelOperation(_:)), signaturePopup.isVisible {
+                hideSignatureHelp()
+                return true
             }
 
             switch selector {
@@ -353,6 +370,33 @@ struct CodeEditorView: NSViewRepresentable {
             textView.setSelectedRange(NSRange(location: min(max(newCaret, 0), storage.length), length: 0))
         }
 
+        // MARK: Signature help
+
+        private func scheduleSignatureHelp(after delay: Duration) {
+            signatureTask?.cancel()
+            signatureTask = Task { [weak self] in
+                if delay > .zero { try? await Task.sleep(for: delay) }
+                guard !Task.isCancelled, let self, let textView = self.textView else { return }
+                let offset = textView.selectedRange().location
+                let help = await self.parent.services.signatureHelp(offset)
+                guard !Task.isCancelled, textView.selectedRange().location == offset else { return }
+                guard let help, let window = textView.window else {
+                    self.signaturePopup.hide()
+                    return
+                }
+                // Anchor at the callee (`fmt.Printf`), like Xcode/VS Code, so it stays put while typing.
+                let start = GoIdentifier.callStart(in: textView.string as NSString, before: offset) ?? offset
+                let anchor = textView.firstRect(forCharacterRange: NSRange(location: start, length: 0), actualRange: nil)
+                self.signaturePopup.show(help, above: anchor, in: window)
+            }
+        }
+
+        private func hideSignatureHelp() {
+            signatureTask?.cancel()
+            signatureTask = nil
+            signaturePopup.hide()
+        }
+
         // MARK: Hover
 
         func mouseMoved(to index: Int?) {
@@ -463,6 +507,7 @@ struct CodeEditorView: NSViewRepresentable {
         func dismissPopups() {
             endHover()
             hideCompletions()
+            hideSignatureHelp()
         }
 
         @objc func didScroll(_ notification: Notification) {
