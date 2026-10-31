@@ -306,6 +306,7 @@ struct DocumentEditor: View {
             isTestFile: document.name.hasSuffix("_test.go"),
             testStatuses: workspace.testStatuses,
             breakpoints: workspace.breakpointLines(for: document),
+            conditionalBreakpoints: workspace.conditionalBreakpointLines(for: document),
             executionLine: workspace.executionLine(for: document),
             isEditable: !document.isReadOnly,
             isActive: isActive,
@@ -335,6 +336,8 @@ struct DocumentEditor: View {
                 performAction: { action in Task { await workspace.perform(action) } },
                 runTest: { name in workspace.runTests(.test(name, in: document.url.deletingLastPathComponent())) },
                 toggleBreakpoint: { line in workspace.toggleBreakpoint(in: document, line: line) },
+                editBreakpointCondition: { line in workspace.editBreakpointCondition(in: document, line: line) },
+                evaluate: { await workspace.evaluate($0) },
                 caretMoved: { document.caretOffset = $0 }),
             onChange: { workspace.updateText(of: document, to: $0) })
     }

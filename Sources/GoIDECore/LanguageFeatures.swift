@@ -250,6 +250,18 @@ public enum GoIdentifier {
         return nil
     }
 
+    /// A selector expression ending at the identifier under `index`: `o.Items` for the `Items`
+    /// part, just `o` for the `o` part (what a debugger should evaluate on hover).
+    public static func expressionRange(in text: NSString, at index: Int) -> NSRange? {
+        guard let word = wordRange(in: text, at: index) else { return nil }
+        var start = word.location
+        while start > 1, text.character(at: start - 1) == 0x2E,  // "."
+              let previous = wordRange(in: text, at: start - 2) {
+            start = previous.location
+        }
+        return NSRange(location: start, length: NSMaxRange(word) - start)
+    }
+
     /// Range of the identifier containing the character at `index`, if any.
     public static func wordRange(in text: NSString, at index: Int) -> NSRange? {
         guard index >= 0, index < text.length, isIdentifier(text.character(at: index)) else { return nil }

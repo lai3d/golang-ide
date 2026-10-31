@@ -90,9 +90,15 @@ enum Snapshot {
                 for line in lines.split(separator: ",").compactMap({ Int($0) }) {
                     workspace.toggleBreakpoint(in: document, line: line - 1)
                 }
+                if let condition = value("--snapshot-condition"), let line = lines.split(separator: ",").first.flatMap({ Int($0) }) {
+                    workspace.setBreakpointConditionForTesting(condition, in: document, line: line - 1)
+                }
                 workspace.startDebugging()
                 for _ in 0..<200 where workspace.debugSession?.state != .stopped {
                     try? await Task.sleep(for: .milliseconds(100))
+                }
+                for watch in (value("--snapshot-watch") ?? "").split(separator: ",") {
+                    workspace.debugSession?.addWatch(String(watch))
                 }
                 if let steps = value("--snapshot-steps").flatMap(Int.init) {
                     for _ in 0..<steps {

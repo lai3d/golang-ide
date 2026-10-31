@@ -113,9 +113,30 @@ private struct CallStackList: View {
 
 private struct VariablesList: View {
     let session: DebugSession
+    @State private var newWatch = ""
 
     var body: some View {
         List {
+            Section("Watch") {
+                ForEach(session.watches, id: \.self) { expression in
+                    HStack(spacing: 6) {
+                        Text(expression).font(.system(size: 12, weight: .medium, design: .monospaced))
+                        Text(session.watchValues[expression] ?? "…")
+                            .font(.system(size: 12, design: .monospaced)).lineLimit(1).textSelection(.enabled)
+                        Spacer()
+                        Button { session.removeWatch(expression) } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                TextField("Add expression…", text: $newWatch)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, design: .monospaced))
+                    .onSubmit {
+                        session.addWatch(newWatch)
+                        newWatch = ""
+                    }
+            }
             Section("Variables") {
                 ForEach(session.scopes) { node in
                     VariableRow(node: node, session: session)

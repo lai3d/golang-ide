@@ -70,7 +70,7 @@ Released so far: [v0.1.0](https://github.com/lai3d/golang-ide/releases/tag/v0.1.
 | 6.2 | ✅ Replace in project | Replace field in the search sidebar: preview, replace one / all (undoable in open files) | 0.5h |
 | 6.3 | ✅ Diff vs HEAD | Side-by-side diff of the current file against HEAD | 0.6h |
 | 6.4 | ✅ Source control panel | Changed files, stage / unstage / discard, commit message + commit | 0.8h |
-| 6.5 | ⬜ Debugger extras | Conditional breakpoints, hover to evaluate while paused, watch expressions | 0.7h |
+| 6.5 | ✅ Debugger extras | Conditional breakpoints, hover to evaluate while paused, watch expressions | 0.7h |
 | 6.6 | ⬜ Integrated terminal | Shell in a bottom-panel tab (PTY), opened in the project folder | 0.8h |
 | 6.7 | ⬜ Go module tools | `go mod tidy`, `go get -u ./...`, `go generate ./...`, `go vet ./...` from the Go menu | 0.3h |
 

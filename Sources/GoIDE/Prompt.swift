@@ -3,7 +3,7 @@ import AppKit
 /// Small modal dialogs for file operations.
 @MainActor
 enum Prompt {
-    static func text(title: String, message: String = "", initial: String, confirm: String) -> String? {
+    static func text(title: String, message: String = "", initial: String, confirm: String, allowEmpty: Bool = false) -> String? {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
@@ -20,7 +20,7 @@ enum Prompt {
         }
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
+        return value.isEmpty && !allowEmpty ? nil : value
     }
 
     static func confirm(title: String, message: String, confirm: String) -> Bool {

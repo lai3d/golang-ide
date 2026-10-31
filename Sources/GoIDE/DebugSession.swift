@@ -43,6 +43,9 @@ final class DebugSession {
     private(set) var selectedFrameID: Int?
     private(set) var scopes: [VariableNode] = []
     private(set) var errorMessage: String?
+    /// Watch expressions and their values in the selected frame.
+    private(set) var watches: [String] = []
+    private(set) var watchValues: [String: String] = [:]
 
     @ObservationIgnored private let client = DAPClient()
     @ObservationIgnored private var threadID: Int?
@@ -56,7 +59,7 @@ final class DebugSession {
     var isActive: Bool { state != .terminated }
 
     /// Launches Delve, sets breakpoints (one-based lines per path) and starts the program.
-    func start(dlv: URL, directory: URL, launch: JSONValue, breakpoints: [String: Set<Int>]) async {
+    func start(dlv: URL, directory: URL, launch: JSONValue, breakpoints: [String: [Int: String?]]) async {
         client.onEvent = { event, body in
             Task { @MainActor in self.handle(event: event, body: body) }
         }
@@ -87,12 +90,46 @@ final class DebugSession {
         }
     }
 
-    func setBreakpoints(path: String, lines: Set<Int>) async {
+    /// One-based lines, each with an optional condition (e.g. `i == 3`).
+    func setBreakpoints(path: String, lines: [Int: String?]) async {
         guard state != .terminated else { return }
         _ = try? await client.request("setBreakpoints", arguments: [
             "source": ["path": .string(path)],
-            "breakpoints": .array(lines.sorted().map { ["line": .int($0)] }),
+            "breakpoints": .array(lines.keys.sorted().map { line in
+                if let condition = lines[line] ?? nil, !condition.isEmpty {
+                    return ["line": .int(line), "condition": .string(condition)]
+                }
+                return ["line": .int(line)]
+            }),
         ])
+    }
+
+    /// Evaluates an expression in the selected frame (nil unless paused).
+    func evaluate(_ expression: String, context: String = "hover") async -> String? {
+        guard state == .stopped, let frame = selectedFrameID,
+              let body = try? await client.request("evaluate", arguments: [
+                  "expression": .string(expression), "frameId": .int(frame), "context": .string(context),
+              ])
+        else { return nil }
+        return body["result"]?.stringValue
+    }
+
+    func addWatch(_ expression: String) {
+        let expression = expression.trimmingCharacters(in: .whitespaces)
+        guard !expression.isEmpty, !watches.contains(expression) else { return }
+        watches.append(expression)
+        Task { await refreshWatches() }
+    }
+
+    func removeWatch(_ expression: String) {
+        watches.removeAll { $0 == expression }
+        watchValues[expression] = nil
+    }
+
+    private func refreshWatches() async {
+        for expression in watches {
+            watchValues[expression] = await evaluate(expression, context: "watch") ?? "—"
+        }
     }
 
     // MARK: Execution control
@@ -142,6 +179,7 @@ final class DebugSession {
         for node in nodes where !node.name.lowercased().contains("global") {
             await expand(node)
         }
+        await refreshWatches()
     }
 
     func expand(_ node: VariableNode) async {

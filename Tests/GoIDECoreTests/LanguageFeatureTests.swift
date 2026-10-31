@@ -160,3 +160,14 @@ import Testing
         await client.shutdown()
     }
 }
+
+@Suite struct ExpressionRangeTests {
+    @Test func findsSelectorChains() {
+        let text = "x := order.Items[0] + o.p.q" as NSString
+        func expr(_ at: Int) -> String? { GoIdentifier.expressionRange(in: text, at: at).map { text.substring(with: $0) } }
+        #expect(expr(12) == "order.Items")   // on "Items"
+        #expect(expr(6) == "order")          // on "order"
+        #expect(expr(26) == "o.p.q")
+        #expect(expr(3) == nil)              // ":="
+    }
+}

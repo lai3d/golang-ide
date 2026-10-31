@@ -208,6 +208,8 @@ final class Workspace {
     /// Breakpoints: canonical file path → one-based lines.
     private(set) var breakpoints: [String: Set<Int>] = [:]
     private(set) var debugSession: DebugSession?
+    /// Breakpoint conditions: path → one-based line → condition.
+    private(set) var breakpointConditions: [String: [Int: String]] = [:]
     private(set) var executionLocation: ExecutionLocation?
 
     // Git
@@ -1624,11 +1626,53 @@ final class Workspace {
     func toggleBreakpoint(in document: Document, line: Int) {
         let key = Self.key(for: document.url)
         var lines = breakpoints[key] ?? []
-        if lines.contains(line + 1) { lines.remove(line + 1) } else { lines.insert(line + 1) }
-        breakpoints[key] = lines.isEmpty ? nil : lines
-        if let session = debugSession, session.isActive {
-            Task { await session.setBreakpoints(path: key, lines: lines) }
+        if lines.contains(line + 1) {
+            lines.remove(line + 1)
+            breakpointConditions[key]?[line + 1] = nil
+        } else {
+            lines.insert(line + 1)
         }
+        breakpoints[key] = lines.isEmpty ? nil : lines
+        syncBreakpoints(key)
+    }
+
+    /// Zero-based lines whose breakpoints have conditions (drawn differently).
+    func conditionalBreakpointLines(for document: Document) -> Set<Int> {
+        Set((breakpointConditions[Self.key(for: document.url)] ?? [:]).keys.map { $0 - 1 })
+    }
+
+    /// Asks for a condition (empty removes it); adds the breakpoint if needed.
+    func editBreakpointCondition(in document: Document, line: Int) {
+        let key = Self.key(for: document.url)
+        let current = breakpointConditions[key]?[line + 1] ?? ""
+        guard let condition = Prompt.text(title: "Breakpoint Condition",
+                                          message: "Stop at line \(line + 1) only when this Go expression is true.",
+                                          initial: current, confirm: "Done", allowEmpty: true) else { return }
+        breakpoints[key, default: []].insert(line + 1)
+        breakpointConditions[key, default: [:]][line + 1] = condition.isEmpty ? nil : condition
+        syncBreakpoints(key)
+    }
+
+    func setBreakpointConditionForTesting(_ condition: String, in document: Document, line: Int) {
+        let key = Self.key(for: document.url)
+        breakpoints[key, default: []].insert(line + 1)
+        breakpointConditions[key, default: [:]][line + 1] = condition
+    }
+
+    /// Breakpoints for a path with their conditions, as DebugSession wants them.
+    private func breakpointSpec(_ key: String) -> [Int: String?] {
+        Dictionary(uniqueKeysWithValues: (breakpoints[key] ?? []).map { ($0, breakpointConditions[key]?[$0]) })
+    }
+
+    private func syncBreakpoints(_ key: String) {
+        guard let session = debugSession, session.isActive else { return }
+        let spec = breakpointSpec(key)
+        Task { await session.setBreakpoints(path: key, lines: spec) }
+    }
+
+    /// Debugger value of the expression at the mouse (nil unless paused).
+    func evaluate(_ expression: String) async -> String? {
+        await debugSession?.evaluate(expression)
     }
 
     func toggleBreakpointAtCaret() {
@@ -1639,8 +1683,9 @@ final class Workspace {
     func clearBreakpoints() {
         let paths = breakpoints.keys
         breakpoints = [:]
+        breakpointConditions = [:]
         if let session = debugSession, session.isActive {
-            Task { for path in paths { await session.setBreakpoints(path: path, lines: []) } }
+            Task { for path in paths { await session.setBreakpoints(path: path, lines: [:]) } }
         }
     }
 
@@ -1700,7 +1745,8 @@ final class Workspace {
         debugSession = session
         output = "Debugging \(title)…\n"
         bottomTab = .debug
-        Task { await session.start(dlv: dlv, directory: directory, launch: launch, breakpoints: breakpoints) }
+        let specs = Dictionary(uniqueKeysWithValues: breakpoints.keys.map { ($0, breakpointSpec($0)) })
+        Task { await session.start(dlv: dlv, directory: directory, launch: launch, breakpoints: specs) }
     }
 
     func stopDebugging() {

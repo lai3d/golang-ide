@@ -20,6 +20,9 @@ struct EditorServices {
     var performAction: @MainActor (CodeAction) -> Void
     var runTest: @MainActor (String) -> Void
     var toggleBreakpoint: @MainActor (Int) -> Void
+    var editBreakpointCondition: @MainActor (Int) -> Void
+    /// Debugger value of an expression (nil unless paused).
+    var evaluate: @MainActor (String) async -> String?
     var caretMoved: @MainActor (Int) -> Void
 }
 
@@ -31,6 +34,7 @@ struct CodeEditorView: NSViewRepresentable {
     var isTestFile = false
     var testStatuses: [String: GoTestResult.Status] = [:]
     var breakpoints: Set<Int> = []
+    var conditionalBreakpoints: Set<Int> = []
     var executionLine: Int?
     var isEditable: Bool
     var isActive: Bool
@@ -103,6 +107,7 @@ struct CodeEditorView: NSViewRepresentable {
         ruler.onRunTest = { [weak coordinator] name in coordinator?.parent.services.runTest(name) }
         ruler.onToggleBreakpoint = { [weak coordinator] line in coordinator?.parent.services.toggleBreakpoint(line) }
         ruler.onToggleFold = { [weak coordinator] line in coordinator?.toggleFold(line: line) }
+        ruler.onEditCondition = { [weak coordinator] line in coordinator?.parent.services.editBreakpointCondition(line) }
         textView.layoutManager?.delegate = coordinator.foldingDelegate
         textView.onPlaceholderClick = { [weak coordinator] offset in coordinator?.unfold(at: offset) }
         let container = EditorContainerView(scrollView: scrollView, gutter: ruler)
@@ -161,6 +166,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
         if let ruler = coordinator.ruler {
             if ruler.breakpoints != breakpoints { ruler.breakpoints = breakpoints }
+            if ruler.conditionalBreakpoints != conditionalBreakpoints { ruler.conditionalBreakpoints = conditionalBreakpoints }
             if ruler.executionLine != executionLine { ruler.executionLine = executionLine }
         }
         if textView.executionLine != executionLine { textView.executionLine = executionLine }
@@ -817,11 +823,17 @@ struct CodeEditorView: NSViewRepresentable {
             if word == hoverWord { return }
             endHover()
             hoverWord = word
+            let ns = textView.string as NSString
+            let expression = GoIdentifier.expressionRange(in: ns, at: index).map { ns.substring(with: $0) }
             hoverTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(450))
                 guard !Task.isCancelled, let self else { return }
-                let markdown = await self.parent.services.hover(index)
-                guard !Task.isCancelled, self.hoverWord == word, let markdown else { return }
+                // While paused in the debugger, show the value first, then the docs.
+                async let docs = self.parent.services.hover(index)
+                let value: String? = if let expression { await self.parent.services.evaluate(expression) } else { nil }
+                let markdown = [value.map { "```go\n\(expression ?? "") = \($0)\n```" }, await docs]
+                    .compactMap { $0 }.joined(separator: "\n\n---\n\n")
+                guard !Task.isCancelled, self.hoverWord == word, !markdown.isEmpty else { return }
                 self.showHover(markdown, for: word)
             }
         }

@@ -25,6 +25,12 @@ final class LineNumberRulerView: NSView {
     var onRunTest: ((String) -> Void)?
     var onToggleBreakpoint: ((Int) -> Void)?
     var onToggleFold: ((Int) -> Void)?
+    var onEditCondition: ((Int) -> Void)?
+
+    /// Zero-based lines whose breakpoints have conditions (orange tags).
+    var conditionalBreakpoints: Set<Int> = [] {
+        didSet { if conditionalBreakpoints != oldValue { needsDisplay = true } }
+    }
 
     /// Foldable lines → whether they're folded (chevrons in the right column).
     var foldMarkers: [Int: Bool] = [:] {
@@ -90,6 +96,20 @@ final class LineNumberRulerView: NSView {
         }
     }
 
+    /// Right-click: breakpoint actions for the line.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let line = line(at: convert(event.locationInWindow, from: nil)) else { return nil }
+        let menu = NSMenu()
+        if breakpoints.contains(line) {
+            menu.addItem(ActionMenuItem(title: "Edit Condition…") { [weak self] in self?.onEditCondition?(line) })
+            menu.addItem(ActionMenuItem(title: "Remove Breakpoint") { [weak self] in self?.onToggleBreakpoint?(line) })
+        } else {
+            menu.addItem(ActionMenuItem(title: "Add Breakpoint") { [weak self] in self?.onToggleBreakpoint?(line) })
+            menu.addItem(ActionMenuItem(title: "Add Conditional Breakpoint…") { [weak self] in self?.onEditCondition?(line) })
+        }
+        return menu
+    }
+
     /// The zero-based line at a point in ruler coordinates.
     private func line(at point: NSPoint) -> Int? {
         guard let textView else { return nil }
@@ -129,7 +149,8 @@ final class LineNumberRulerView: NSView {
                 path.appendArc(from: NSPoint(x: tag.minX, y: tag.maxY), to: NSPoint(x: tag.minX, y: tag.midY), radius: 3)
                 path.appendArc(from: NSPoint(x: tag.minX, y: tag.minY), to: NSPoint(x: tag.minX + 3, y: tag.minY), radius: 3)
                 path.close()
-                NSColor.systemBlue.withAlphaComponent(0.85).setFill()
+                (conditionalBreakpoints.contains(line) ? NSColor.systemOrange : NSColor.systemBlue)
+                    .withAlphaComponent(0.85).setFill()
                 path.fill()
             }
             if line == executionLine {

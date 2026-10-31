@@ -79,3 +79,56 @@ import Testing
         await client.shutdown()
     }
 }
+
+@Suite struct DAPExtrasTests {
+    @Test(.enabled(if: ToolLocator.find("dlv") != nil), .timeLimit(.minutes(2)))
+    func conditionalBreakpointAndEvaluate() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-dapx-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.canonicalFileURL
+        try "module example.com/dbg\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
+        let main = dir.appendingPathComponent("main.go")
+        try """
+            package main
+
+            func main() {
+            \ttotal := 0
+            \tfor i := 0; i < 10; i++ {
+            \t\ttotal += i
+            \t}
+            \tprintln(total)
+            }
+
+            """.write(to: main, atomically: true, encoding: .utf8)
+
+        let client = DAPClient()
+        let (events, continuation) = AsyncStream<(String, JSONValue)>.makeStream()
+        client.onEvent = { continuation.yield(($0, $1)) }
+        try await client.start(dlv: try #require(ToolLocator.find("dlv")), directory: dir, environment: ToolLocator.environment())
+        try await client.request("initialize", arguments: ["adapterID": "go", "linesStartAt1": true, "pathFormat": "path"])
+        try await client.request("launch", arguments: [
+            "request": "launch", "mode": "debug", "program": .string(dir.path),
+            "output": .string(base.appendingPathComponent("bin").path),
+        ])
+        await client.waitForEvent("initialized")
+        try await client.request("setBreakpoints", arguments: [
+            "source": ["path": .string(main.path)], "breakpoints": [["line": 6, "condition": "i == 7"]],
+        ])
+        try await client.request("configurationDone")
+        var thread: Int?
+        for await (event, body) in events where event == "stopped" {
+            thread = body["threadId"]?.intValue
+            break
+        }
+        let frames = StackFrame.parseAll(try await client.request("stackTrace", arguments: ["threadId": .int(try #require(thread)), "levels": 1]))
+        let frame = try #require(frames.first).id
+        func evaluate(_ expression: String) async throws -> String? {
+            try await client.request("evaluate", arguments: ["expression": .string(expression), "frameId": .int(frame), "context": "hover"])["result"]?.stringValue
+        }
+        #expect(try await evaluate("i") == "7")              // stopped only when the condition held
+        #expect(try await evaluate("total") == "21")         // 0+1+…+6
+        #expect(try await evaluate("total * 2 + i") == "49")
+        await client.shutdown()
+    }
+}
