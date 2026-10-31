@@ -2,14 +2,64 @@ import Foundation
 
 /// gopls settings GoIDE relies on (sent as initializationOptions and workspace/configuration).
 public enum GoplsSettings {
-    public static let `default`: JSONValue = [
-        "hints": [
-            "assignVariableTypes": true, "compositeLiteralFields": true, "constantValues": true,
-            "functionTypeParameters": true, "parameterNames": true, "rangeVariableTypes": true,
-        ],
-        "semanticTokens": true,
-        "usePlaceholders": true,  // function call completions get parameter placeholders
-    ]
+    /// Settings with the user's options from `UserDefaults.standard`.
+    public static var `default`: JSONValue { GoplsOptions.load().json }
+}
+
+/// User-facing gopls options (Settings ▸ Go), stored in UserDefaults.
+public struct GoplsOptions: Sendable, Equatable {
+    public static let gofumptKey = "gopls.gofumpt"
+    public static let localKey = "gopls.local"
+    public static let staticcheckKey = "gopls.staticcheck"
+    public static let shadowKey = "gopls.analyses.shadow"
+    public static let buildTagsKey = "gopls.buildTags"
+
+    /// Stricter gofumpt formatting.
+    public var gofumpt = false
+    /// Comma-separated import path prefixes grouped after third-party imports (`goimports -local`).
+    public var local = ""
+    /// Extra staticcheck analyzers.
+    public var staticcheck = false
+    /// Report shadowed variables.
+    public var shadow = false
+    /// Comma- or space-separated build tags (`-tags=…`).
+    public var buildTags = ""
+
+    public init() {}
+
+    public static func load(from defaults: UserDefaults = .standard) -> GoplsOptions {
+        var options = GoplsOptions()
+        options.gofumpt = defaults.bool(forKey: gofumptKey)
+        options.local = defaults.string(forKey: localKey) ?? ""
+        options.staticcheck = defaults.bool(forKey: staticcheckKey)
+        options.shadow = defaults.bool(forKey: shadowKey)
+        options.buildTags = defaults.string(forKey: buildTagsKey) ?? ""
+        return options
+    }
+
+    /// Normalized `-tags=a,b`, or nil when no tags are set.
+    public var buildFlag: String? {
+        let tags = buildTags.split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
+        return tags.isEmpty ? nil : "-tags=" + tags.joined(separator: ",")
+    }
+
+    public var json: JSONValue {
+        var settings: [String: JSONValue] = [
+            "hints": [
+                "assignVariableTypes": true, "compositeLiteralFields": true, "constantValues": true,
+                "functionTypeParameters": true, "parameterNames": true, "rangeVariableTypes": true,
+            ],
+            "semanticTokens": true,
+            "usePlaceholders": true,  // function call completions get parameter placeholders
+            "gofumpt": .bool(gofumpt),
+            "staticcheck": .bool(staticcheck),
+            "analyses": ["shadow": .bool(shadow)],
+        ]
+        let local = self.local.trimmingCharacters(in: .whitespaces)
+        if !local.isEmpty { settings["local"] = .string(local) }
+        if let buildFlag { settings["buildFlags"] = [.string(buildFlag)] }
+        return .object(settings)
+    }
 }
 
 /// One decoded semantic token (`textDocument/semanticTokens/full`).

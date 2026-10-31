@@ -3,12 +3,19 @@ import SwiftUI
 
 /// GoIDE ▸ Settings… (⌘,)
 struct SettingsView: View {
+    @AppStorage("settingsTab") private var tab = "editor"
+
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             EditorSettingsTab()
                 .tabItem { Label("Editor", systemImage: "character.cursor.ibeam") }
+                .tag("editor")
+            GoSettingsTab()
+                .tabItem { Label("Go", systemImage: "chevron.left.forwardslash.chevron.right") }
+                .tag("go")
             ToolsSettingsTab()
                 .tabItem { Label("Go Tools", systemImage: "wrench.and.screwdriver") }
+                .tag("tools")
         }
         .frame(width: 520)
         .padding(20)
@@ -48,6 +55,43 @@ private struct EditorSettingsTab: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
         }
+    }
+}
+
+/// gopls options; applied live to every open window.
+private struct GoSettingsTab: View {
+    @AppStorage(GoplsOptions.gofumptKey) private var gofumpt = false
+    @AppStorage(GoplsOptions.localKey) private var local = ""
+    @AppStorage(GoplsOptions.staticcheckKey) private var staticcheck = false
+    @AppStorage(GoplsOptions.shadowKey) private var shadow = false
+    @AppStorage(GoplsOptions.buildTagsKey) private var buildTags = ""
+
+    var body: some View {
+        Form {
+            Section("Formatting") {
+                Toggle("Format with gofumpt (stricter gofmt)", isOn: $gofumpt)
+                TextField("Local import prefix", text: $local, prompt: Text("github.com/you/project"))
+                Text("Imports with this prefix are grouped after third-party ones (goimports -local).")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Section("Diagnostics") {
+                Toggle("Staticcheck analyzers", isOn: $staticcheck)
+                Toggle("Report shadowed variables", isOn: $shadow)
+            }
+            Section("Build") {
+                TextField("Build tags", text: $buildTags, prompt: Text("integration, e2e"))
+                Text("Used by gopls and by Build, Run, Test, Vet and Debug.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(minHeight: 420)
+        .onChange(of: gofumpt) { Workspace.scheduleGoplsSettingsUpdate() }
+        .onChange(of: local) { Workspace.scheduleGoplsSettingsUpdate() }
+        .onChange(of: staticcheck) { Workspace.scheduleGoplsSettingsUpdate() }
+        .onChange(of: shadow) { Workspace.scheduleGoplsSettingsUpdate() }
+        .onChange(of: buildTags) { Workspace.scheduleGoplsSettingsUpdate() }
     }
 }
 

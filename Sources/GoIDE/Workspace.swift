@@ -293,6 +293,25 @@ final class Workspace {
         editRequest = EditRequest(action: action)
     }
 
+    /// Settings ▸ Go changed: gopls re-reads its settings via workspace/configuration.
+    func goplsSettingsChanged() {
+        guard lspReady else { return }
+        try? lsp?.notify("workspace/didChangeConfiguration", params: ["settings": .null])
+        flashStatus("gopls settings updated")
+    }
+
+    @ObservationIgnored private static var settingsUpdateTask: Task<Void, Never>?
+
+    /// Debounced (typing in a settings field), then sent to every window's gopls.
+    static func scheduleGoplsSettingsUpdate() {
+        settingsUpdateTask?.cancel()
+        settingsUpdateTask = Task {
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            allOpen.forEach { $0.goplsSettingsChanged() }
+        }
+    }
+
     func requestRefactor(_ kind: RefactorKind) {
         refactorRequest = RefactorRequest(kind: kind)
     }
@@ -1831,7 +1850,7 @@ final class Workspace {
             return
         }
         saveAll()
-        var arguments = ["test", "-json"]
+        var arguments = ["test", "-json"] + (GoplsOptions.load().buildFlag.map { [$0] } ?? [])
         let profile = FileManager.default.temporaryDirectory.appendingPathComponent("goide-cover-\(UUID().uuidString).out")
         if measure { arguments.append("-coverprofile=" + profile.path) }
         switch scope {
@@ -2087,6 +2106,7 @@ final class Workspace {
         if case .object(var config) = launch {
             config["output"] = .string(FileManager.default.temporaryDirectory
                 .appendingPathComponent("goide-debug-\(UUID().uuidString)").path)
+            if let tags = GoplsOptions.load().buildFlag { config["buildFlags"] = .string(tags) }
             launch = .object(config)
         }
         if let session = debugSession, session.isActive { return }
@@ -2130,6 +2150,12 @@ final class Workspace {
             return
         }
         saveAll()
+        var arguments = arguments
+        // Settings ▸ Go build tags apply to every build, like they do for gopls.
+        if let tags = GoplsOptions.load().buildFlag, let verb = arguments.first,
+           ["build", "run", "test", "vet", "install", "generate"].contains(verb), !arguments.contains(where: { $0.hasPrefix("-tags") }) {
+            arguments.insert(tags, at: 1)
+        }
         let envNote = extra.isEmpty ? "" : extra.keys.sorted().map { "\($0)=… " }.joined()
         // Echo the command shell-style (quote words with spaces) so it reads as it ran.
         let shown = arguments.map { $0.contains(" ") || $0.isEmpty ? "\"\($0)\"" : $0 }.joined(separator: " ")

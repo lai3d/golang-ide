@@ -57,3 +57,25 @@ import Testing
         await client.shutdown()
     }
 }
+
+@Suite struct GoplsOptionsTests {
+    @Test func defaultsAndJSON() {
+        let defaults = UserDefaults(suiteName: "GoplsOptionsTests-\(UUID().uuidString)")!
+        var options = GoplsOptions.load(from: defaults)
+        #expect(options == GoplsOptions())
+        #expect(options.json["gofumpt"] == .bool(false))
+        #expect(options.json["local"] == nil)
+        #expect(options.json["buildFlags"] == nil)
+        #expect(options.json["hints"]?["parameterNames"] == .bool(true))
+
+        defaults.set(true, forKey: GoplsOptions.gofumptKey)
+        defaults.set(" example.com/me ", forKey: GoplsOptions.localKey)
+        defaults.set(true, forKey: GoplsOptions.shadowKey)
+        defaults.set("integration, e2e", forKey: GoplsOptions.buildTagsKey)
+        options = GoplsOptions.load(from: defaults)
+        #expect(options.json["gofumpt"] == .bool(true))
+        #expect(options.json["local"] == .string("example.com/me"))
+        #expect(options.json["analyses"]?["shadow"] == .bool(true))
+        #expect(options.json["buildFlags"] == .array([.string("-tags=integration,e2e")]))
+    }
+}

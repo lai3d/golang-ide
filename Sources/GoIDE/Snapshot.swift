@@ -121,6 +121,15 @@ enum Snapshot {
                 workspace.bottomTab = .profile
                 try? await Task.sleep(for: .milliseconds(500))
             }
+            if let key = value("--snapshot-enable-setting"), let workspace {
+                // Flip a gopls option live (argument domain: highest priority, never persisted).
+                try? await Task.sleep(for: .milliseconds(1500))
+                var domain = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+                domain[key] = true
+                UserDefaults.standard.setVolatileDomain(domain, forName: UserDefaults.argumentDomain)
+                workspace.goplsSettingsChanged()
+                try? await Task.sleep(for: .milliseconds(2500))
+            }
             if args.contains("--snapshot-outline"), let workspace {
                 workspace.sidebarMode = .outline
                 try? await Task.sleep(for: .milliseconds(1200))

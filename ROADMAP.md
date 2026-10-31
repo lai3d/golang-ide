@@ -96,7 +96,7 @@ Released in [v0.3.0](https://github.com/lai3d/golang-ide/releases/tag/v0.3.0) (p
 | 8.3 | ✅ Profiling | Go ▸ Profile CPU / Memory (benchmarks or tests of the current package): pprof top table (functions / lines, flat & cum), click to source, open the pprof web UI | 0.8h |
 | 8.4 | ✅ Refactor menu | Extract Function (⌥⌘M) / Method / Variable (⌥⌘V) / Constant, Inline Call (⌥⌘N) / Variable from the selection (gopls code actions), menu bar and context menu; then name the extracted symbol | 0.4h |
 | 8.5 | ✅ Rename preview | Preview… in the rename dialog: every changed line per file, before → after, then apply or cancel | 0.5h |
-| 8.6 | ⬜ gopls settings | Settings ▸ Go: gofumpt, local import prefix, staticcheck, extra analyzers; pushed live via `workspace/didChangeConfiguration` | 0.4h |
+| 8.6 | ✅ gopls settings | Settings ▸ Go: gofumpt, local import prefix, staticcheck, shadow analyzer, build tags (also used by build / run / test / vet / debug); pushed live via `workspace/didChangeConfiguration` | 0.4h |
 | 8.7 | ⬜ README screenshots | Feature screenshots generated with `--snapshot` into `docs/screenshots/`, shown in the README | 0.4h |
 
 ## Later / ideas
