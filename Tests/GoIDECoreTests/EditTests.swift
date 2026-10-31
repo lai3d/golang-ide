@@ -26,6 +26,7 @@ import Testing
             ["kind": "create", "uri": "file:///c.go"],
         ]])
         #expect(documentChanges.changes.keys.sorted() == ["file:///b.go"])
+        #expect(documentChanges.creates == ["file:///c.go"])
     }
 
     @Test func parsesCodeActionsAndCommands() {

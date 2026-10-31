@@ -237,3 +237,40 @@ import GoIDECore
         #expect(try String(contentsOf: greetFile, encoding: .utf8) == "package main\n\nfunc salute() {}\n")  // closed: disk
     }
 }
+
+@MainActor
+@Suite struct WorkspaceCodeActionTests {
+    @Test(.enabled(if: GoIDECore.ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
+    func appliesEditActionsAndCommandActions() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-ws-ca-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.canonicalFileURL
+        try "module example.com/ca\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
+        try "package main\n\nimport \"os\"\n\nfunc Add(a, b int) int { return a + b }\n\nfunc main() {}\n"
+            .write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+
+        let workspace = Workspace()
+        await workspace.openFolder(dir)
+        let main = try #require(workspace.activeDocument)
+        // Wait for gopls to publish the unused-import diagnostic.
+        for _ in 0..<50 where workspace.diagnostics(for: main).isEmpty { try await Task.sleep(for: .milliseconds(100)) }
+        let importOffset = ("package main\n\nimport \"" as NSString).length
+
+        // An action with an edit.
+        let actions = await workspace.codeActions(in: main, at: importOffset)
+        let organize = try #require(actions.first { $0.kind == "source.organizeImports" })
+        await workspace.perform(organize)
+        #expect(!main.text.contains("\"os\""))
+
+        // A command action: gopls answers with workspace/applyEdit creating main_test.go.
+        let addOffset = ("package main\n\nfunc Ad" as NSString).length
+        let addTest = try #require(await workspace.codeActions(in: main, at: addOffset).first { $0.kind == "source.addTest" })
+        await workspace.perform(addTest)
+        let testFile = dir.appendingPathComponent("main_test.go")
+        for _ in 0..<50 where workspace.activeDocument?.name != "main_test.go" { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(workspace.activeDocument?.name == "main_test.go")
+        #expect(workspace.activeDocument?.text.contains("func TestAdd") == true)
+        #expect(FileManager.default.fileExists(atPath: testFile.path))
+    }
+}

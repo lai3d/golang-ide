@@ -100,6 +100,9 @@ final class Workspace {
     private(set) var searchFocusRequest = 0
     @ObservationIgnored private var searchTask: Task<Void, Never>?
 
+    /// Bumped to ask the active editor to show its quick-fix menu (⌥↩).
+    private(set) var quickFixRequest = 0
+
     // Find references
     private(set) var referenceResults: [SearchFileResult] = []
     private(set) var referenceTitle = ""
@@ -623,12 +626,83 @@ final class Workspace {
         }
     }
 
+    // MARK: - Code actions
+
+    func requestQuickFix() {
+        quickFixRequest += 1
+    }
+
+    /// Quick fixes, refactorings and source actions at the caret (or selection).
+    func codeActions(in document: Document, at offset: Int, length: Int = 0) async -> [CodeAction] {
+        guard lspReady, document.isGo, let lsp else { return [] }
+        let index = LineIndex(document.text)
+        let caret = index.position(of: offset)
+        let related = diagnostics(for: document).filter { $0.contains(caret) || $0.start.line == caret.line }
+        let range: (start: TextPosition, end: TextPosition) = length > 0
+            ? (caret, index.position(of: offset + length))
+            : related.first.map { ($0.start, $0.end) } ?? (caret, caret)
+        guard let result = try? await lsp.request("textDocument/codeAction", params: [
+            "textDocument": ["uri": .string(document.url.absoluteString)],
+            "range": ["start": range.start.json, "end": range.end.json],
+            "context": ["diagnostics": .array(related.compactMap(\.raw)), "triggerKind": 1],
+        ]) else { return [] }
+        return CodeAction.parseAll(result)
+    }
+
+    /// Runs a code action: resolves it if needed, applies its edit, then runs its command
+    /// (gopls may answer with workspace/applyEdit or window/showDocument).
+    func perform(_ action: CodeAction) async {
+        guard let lsp else { return }
+        var action = action
+        if action.edit == nil, action.command == nil, action.raw["data"] != nil,
+           let resolved = try? await lsp.request("codeAction/resolve", params: action.raw),
+           let parsed = CodeAction.parseAll(.array([resolved])).first {
+            action = parsed
+        }
+        if let edit = action.edit { apply(edit) }
+        if let command = action.command, let name = command["command"]?.stringValue {
+            do {
+                _ = try await lsp.request("workspace/executeCommand", params: [
+                    "command": .string(name), "arguments": command["arguments"] ?? [],
+                ])
+            } catch {
+                flashStatus("\(action.title) failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Requests gopls sends to us.
+    private func handleServerRequest(method: String, params: JSONValue) -> JSONValue? {
+        switch method {
+        case "workspace/applyEdit":
+            apply(WorkspaceEdit.parse(params["edit"] ?? .null))
+            return ["applied": true]
+        case "window/showDocument":
+            guard let uri = params["uri"]?.stringValue, let url = URL(string: uri) else { return ["success": false] }
+            if url.isFileURL, params["external"]?.boolValue != true {
+                let start = TextPosition(json: params["selection"]?["start"]) ?? TextPosition(line: 0, character: 0)
+                navigate(to: url, position: start)
+            } else {
+                NSWorkspace.shared.open(url)
+            }
+            return ["success": true]
+        default:
+            return nil
+        }
+    }
+
     /// Applies a WorkspaceEdit: open documents change in their buffers (undoable, unsaved);
     /// other files are rewritten on disk. Returns the number of files changed.
     @discardableResult
     func apply(_ edit: WorkspaceEdit) -> Int {
         var changed = 0
         var written: [String] = []
+        var created: [URL] = []
+        for uri in edit.creates {
+            guard let url = URL(string: uri), url.isFileURL, !FileManager.default.fileExists(atPath: url.path) else { continue }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if FileManager.default.createFile(atPath: url.path, contents: Data()) { created.append(url) }
+        }
         for (uri, edits) in edit.changes where !edits.isEmpty {
             guard let url = URL(string: uri), url.isFileURL else { continue }
             let key = Self.key(for: url)
@@ -646,6 +720,10 @@ final class Workspace {
             }
         }
         notifyWatchedFiles(written)  // don't wait for FSEvents
+        if !created.isEmpty {
+            reloadTree()
+            created.forEach { openFile($0) }  // e.g. a generated _test.go
+        }
         return changed
     }
 
@@ -756,6 +834,9 @@ final class Workspace {
         client.onNotification = { method, params in
             Task { @MainActor in self.handleNotification(client, method: method, params: params) }
         }
+        client.onRequest = { method, params in
+            await MainActor.run { self.handleServerRequest(method: method, params: params) }
+        }
         client.onExit = { status in
             Task { @MainActor in
                 guard self.lsp === client else { return }
@@ -787,6 +868,7 @@ final class Workspace {
         lspReady = false
         client.onNotification = nil
         client.onExit = nil
+        client.onRequest = nil
         lspStatus = "gopls: stopped"
         await client.shutdown()
     }
@@ -851,16 +933,20 @@ final class Workspace {
             ]],
             "definition": ["linkSupport": false],
             "rename": ["prepareSupport": true],
-            "formatting": ["dynamicRegistration": false],
             "codeAction": [
                 "isPreferredSupport": true,
+                "dataSupport": true,
+                "resolveSupport": ["properties": ["edit"]],
                 "codeActionLiteralSupport": ["codeActionKind": ["valueSet": [
                     "", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite",
                     "source", "source.organizeImports", "source.fixAll",
                 ]]],
             ],
+            "formatting": ["dynamicRegistration": false],
         ]
         let workspace: JSONValue = [
+            "applyEdit": true,
+            "workspaceEdit": ["documentChanges": true, "resourceOperations": ["create"]],
             "configuration": true,
             "workspaceFolders": true,
             "didChangeWatchedFiles": ["dynamicRegistration": false],
@@ -874,6 +960,7 @@ final class Workspace {
                 "textDocument": textDocument,
                 "workspace": workspace,
                 "general": ["positionEncodings": ["utf-16"]],
+                "window": ["showDocument": ["support": true]],
             ],
         ]
     }

@@ -12,14 +12,24 @@ public struct Diagnostic: Sendable, Hashable, Identifiable {
     public let severity: Severity
     public let message: String
     public let source: String?
+    /// The diagnostic as the server sent it, echoed back in code action requests.
+    public let raw: JSONValue?
 
-    public init(start: TextPosition, end: TextPosition, severity: Severity, message: String, source: String? = nil) {
+    public init(start: TextPosition, end: TextPosition, severity: Severity, message: String,
+                source: String? = nil, raw: JSONValue? = nil) {
         self.id = UUID()
         self.start = start
         self.end = end
         self.severity = severity
         self.message = message
         self.source = source
+        self.raw = raw
+    }
+
+    /// Whether `position` lies within this diagnostic's range (inclusive of the end).
+    public func contains(_ position: TextPosition) -> Bool {
+        (start.line, start.character) <= (position.line, position.character)
+            && (position.line, position.character) <= (end.line, end.character)
     }
 
     /// Parses one LSP `Diagnostic` object.
@@ -31,7 +41,7 @@ public struct Diagnostic: Sendable, Hashable, Identifiable {
         else { return nil }
         let severity = Severity(rawValue: value["severity"]?.intValue ?? 1) ?? .error
         return Diagnostic(start: start, end: end, severity: severity, message: message,
-                          source: value["source"]?.stringValue)
+                          source: value["source"]?.stringValue, raw: value)
     }
 
     /// Parses `textDocument/publishDiagnostics` params.

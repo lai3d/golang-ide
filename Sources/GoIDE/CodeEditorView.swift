@@ -10,6 +10,8 @@ struct EditorServices {
     var definition: @MainActor (Int) -> Void
     var references: @MainActor (Int) -> Void
     var rename: @MainActor (Int) -> Void
+    var codeActions: @MainActor (_ offset: Int, _ length: Int) async -> [CodeAction]
+    var performAction: @MainActor (CodeAction) -> Void
     var caretMoved: @MainActor (Int) -> Void
 }
 
@@ -22,6 +24,7 @@ struct CodeEditorView: NSViewRepresentable {
     var isActive: Bool
     var diagnostics: [Diagnostic]
     var reveal: RevealTarget?
+    var quickFixRequest = 0
     var services: EditorServices
     var onChange: (String) -> Void
 
@@ -86,6 +89,7 @@ struct CodeEditorView: NSViewRepresentable {
 
         coordinator.textView = textView
         coordinator.ruler = ruler
+        coordinator.lastQuickFixRequest = quickFixRequest
         textView.string = text
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         ruler.textDidChange()
@@ -119,6 +123,11 @@ struct CodeEditorView: NSViewRepresentable {
             coordinator.applyStyling()
         }
 
+        if quickFixRequest != coordinator.lastQuickFixRequest {
+            coordinator.lastQuickFixRequest = quickFixRequest
+            if isActive { coordinator.showQuickFixes() }
+        }
+
         if let reveal, reveal.id != coordinator.lastRevealID {
             coordinator.lastRevealID = reveal.id
             coordinator.performReveal(reveal, in: scrollView)
@@ -137,6 +146,7 @@ struct CodeEditorView: NSViewRepresentable {
         var appliedDiagnostics: [Diagnostic] = []
         var appliedHighlightGo = false
         var lastRevealID: UUID?
+        var lastQuickFixRequest = 0
         var isActive: Bool?
 
         private let completionPopup = CompletionPopup()
@@ -515,7 +525,49 @@ struct CodeEditorView: NSViewRepresentable {
                 ActionMenuItem(title: "Jump to Definition") { [weak self] in self?.parent.services.definition(offset) },
                 ActionMenuItem(title: "Find References") { [weak self] in self?.parent.services.references(offset) },
                 ActionMenuItem(title: "Rename Symbol…") { [weak self] in self?.parent.services.rename(offset) },
+                ActionMenuItem(title: "Quick Fix…") { [weak self] in
+                    DispatchQueue.main.async { self?.showQuickFixes() }  // after this menu closes
+                },
             ]
+        }
+
+        /// Pops up the code actions for the caret/selection below the caret (⌥↩).
+        func showQuickFixes() {
+            guard let textView, parent.highlightGo else { return }
+            dismissPopups()
+            let selection = textView.selectedRange()
+            Task { [weak self] in
+                guard let self else { return }
+                let actions = await self.parent.services.codeActions(selection.location, selection.length)
+                guard let textView = self.textView, let window = textView.window else { return }
+                let menu = NSMenu()
+                menu.autoenablesItems = false
+                let groups: [(String, [CodeAction])] = [
+                    ("Quick Fixes", actions.filter { $0.kind == nil || $0.kind!.hasPrefix("quickfix") }),
+                    ("Refactor", actions.filter { $0.kind?.hasPrefix("refactor") == true }),
+                    ("Source", actions.filter {
+                        guard let kind = $0.kind else { return false }
+                        return !kind.hasPrefix("quickfix") && !kind.hasPrefix("refactor")
+                    }),
+                ]
+                for (title, group) in groups where !group.isEmpty {
+                    if !menu.items.isEmpty { menu.addItem(.separator()) }
+                    menu.addItem(NSMenuItem.sectionHeader(title: title))
+                    for action in group.sorted(by: { $0.isPreferred && !$1.isPreferred }) {
+                        menu.addItem(ActionMenuItem(title: action.title) { [weak self] in
+                            self?.parent.services.performAction(action)
+                        })
+                    }
+                }
+                if menu.items.isEmpty {
+                    let none = NSMenuItem(title: "No Actions Available", action: nil, keyEquivalent: "")
+                    none.isEnabled = false
+                    menu.addItem(none)
+                }
+                let screen = textView.firstRect(forCharacterRange: NSRange(location: selection.location, length: 0), actualRange: nil)
+                let rect = textView.convert(window.convertFromScreen(screen), from: nil)
+                menu.popUp(positioning: nil, at: NSPoint(x: rect.minX, y: rect.maxY + 2), in: textView)
+            }
         }
 
         func dismissPopups() {

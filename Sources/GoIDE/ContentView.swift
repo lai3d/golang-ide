@@ -224,6 +224,7 @@ struct DocumentEditor: View {
             isActive: isActive,
             diagnostics: workspace.diagnostics(for: document),
             reveal: document.revealTarget,
+            quickFixRequest: workspace.quickFixRequest,
             services: EditorServices(
                 completions: { await workspace.completions(in: document, at: $0) },
                 hover: { await workspace.hover(in: document, at: $0) },
@@ -231,6 +232,8 @@ struct DocumentEditor: View {
                 definition: { offset in Task { await workspace.jumpToDefinition(from: document, at: offset) } },
                 references: { offset in Task { await workspace.findReferences(in: document, at: offset) } },
                 rename: { offset in Task { await workspace.promptRename(in: document, at: offset) } },
+                codeActions: { await workspace.codeActions(in: document, at: $0, length: $1) },
+                performAction: { action in Task { await workspace.perform(action) } },
                 caretMoved: { document.caretOffset = $0 }),
             onChange: { workspace.updateText(of: document, to: $0) })
     }

@@ -91,6 +91,9 @@ struct GoIDEApp: App {
                 }
                 .keyboardShortcut("e", modifiers: [.control, .command])
                 .disabled(!workspace.isGoFile)
+                Button("Quick Fix…") { workspace.requestQuickFix() }
+                    .keyboardShortcut(.return, modifiers: .option)
+                    .disabled(!workspace.isGoFile)
             }
             CommandMenu("Go") {
                 Button("Run") { workspace.runGo(["run", "."]) }

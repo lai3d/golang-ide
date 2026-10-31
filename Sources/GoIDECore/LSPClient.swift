@@ -4,6 +4,8 @@ import Foundation
 public final class LSPClient: @unchecked Sendable {
     public typealias NotificationHandler = @Sendable (_ method: String, _ params: JSONValue) -> Void
     public typealias ExitHandler = @Sendable (_ status: Int32) -> Void
+    /// Answers a request from the server (e.g. `workspace/applyEdit`); nil = default answer.
+    public typealias RequestHandler = @Sendable (_ method: String, _ params: JSONValue) async -> JSONValue?
 
     public enum ClientError: Error, LocalizedError {
         case notRunning
@@ -27,6 +29,7 @@ public final class LSPClient: @unchecked Sendable {
     private var pending: [Int: CheckedContinuation<JSONValue, any Error>] = [:]
     private var _onNotification: NotificationHandler?
     private var _onExit: ExitHandler?
+    private var _onRequest: RequestHandler?
 
     public init() {}
 
@@ -40,6 +43,12 @@ public final class LSPClient: @unchecked Sendable {
     public var onExit: ExitHandler? {
         get { lock.withLock { _onExit } }
         set { lock.withLock { _onExit = newValue } }
+    }
+
+    /// Called (on a background task) for requests the server sends to the client.
+    public var onRequest: RequestHandler? {
+        get { lock.withLock { _onRequest } }
+        set { lock.withLock { _onRequest = newValue } }
     }
 
     public var isRunning: Bool { lock.withLock { process?.isRunning ?? false } }
@@ -172,17 +181,28 @@ public final class LSPClient: @unchecked Sendable {
         }
     }
 
-    /// Answers requests the server sends to the client with safe defaults.
+    /// Answers requests the server sends to the client: via `onRequest`, else safe defaults.
     private func handleServerRequest(id: JSONValue, method: String, params: JSONValue) {
-        let result: JSONValue
+        guard let handler = onRequest else {
+            try? send(["jsonrpc": "2.0", "id": id, "result": Self.defaultResult(method, params)])
+            return
+        }
+        Task { [self] in
+            let result = await handler(method, params) ?? Self.defaultResult(method, params)
+            try? send(["jsonrpc": "2.0", "id": id, "result": result])
+        }
+    }
+
+    private static func defaultResult(_ method: String, _ params: JSONValue) -> JSONValue {
         switch method {
         case "workspace/configuration":
             let count = params["items"]?.arrayValue?.count ?? 0
-            result = .array(Array(repeating: .null, count: count))
+            return .array(Array(repeating: .null, count: count))
+        case "workspace/applyEdit":
+            return ["applied": false]
         default:
-            result = .null
+            return .null
         }
-        try? send(["jsonrpc": "2.0", "id": id, "result": result])
     }
 
     private func handleExit(_ status: Int32) {

@@ -20,24 +20,32 @@ public extension TextEdit {
 /// An LSP `WorkspaceEdit`, flattened to text edits per document URI.
 public struct WorkspaceEdit: Sendable, Hashable {
     public var changes: [String: [TextEdit]]
+    /// Files to create (empty) before applying `changes`, e.g. a new _test.go.
+    public var creates: [String]
 
-    public init(changes: [String: [TextEdit]]) {
+    public init(changes: [String: [TextEdit]], creates: [String] = []) {
         self.changes = changes
+        self.creates = creates
     }
 
     public var isEmpty: Bool { changes.values.allSatisfy(\.isEmpty) }
 
-    /// Parses both `changes` and `documentChanges` (text edits only; file operations are skipped).
+    /// Parses `changes` and `documentChanges` (text edits and file creation; renames/deletes are skipped).
     public static func parse(_ value: JSONValue) -> WorkspaceEdit {
         var changes: [String: [TextEdit]] = [:]
+        var creates: [String] = []
         for (uri, edits) in value["changes"]?.objectValue ?? [:] {
             changes[uri, default: []] += edits.arrayValue?.compactMap(TextEdit.parse) ?? []
         }
         for change in value["documentChanges"]?.arrayValue ?? [] {
+            if change["kind"]?.stringValue == "create", let uri = change["uri"]?.stringValue {
+                creates.append(uri)
+                continue
+            }
             guard let uri = change["textDocument"]?["uri"]?.stringValue else { continue }
             changes[uri, default: []] += change["edits"]?.arrayValue?.compactMap(TextEdit.parse) ?? []
         }
-        return WorkspaceEdit(changes: changes)
+        return WorkspaceEdit(changes: changes, creates: creates)
     }
 }
 
