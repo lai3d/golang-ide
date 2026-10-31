@@ -48,3 +48,20 @@ import Testing
         #expect(fresh.isUncommitted)
     }
 }
+
+@Suite struct SideBySideDiffTests {
+    @Test func alignsAndFoldsUnchangedLines() {
+        let base = (1...20).map { "line \($0)" }.joined(separator: "\n") + "\n"
+        var lines = (1...20).map { "line \($0)" }
+        lines[9] = "line 10 changed"          // changed
+        lines.insert("inserted", at: 15)      // added after line 15
+        lines.remove(at: 19)                  // line 19 removed (index shifted by the insert)
+        let rows = SideBySideDiff.rows(base: base, current: lines.joined(separator: "\n") + "\n", context: 1)
+        let kinds = rows.map(\.kind)
+        #expect(kinds.first == .gap(8))
+        #expect(rows.contains { $0.kind == .changed && $0.left?.text == "line 10" && $0.right?.text == "line 10 changed" })
+        #expect(rows.contains { $0.kind == .added && $0.right?.text == "inserted" && $0.left == nil })
+        #expect(rows.contains { $0.kind == .removed && $0.left?.number == 19 && $0.right == nil })
+        #expect(SideBySideDiff.rows(base: base, current: base) == [DiffRow(id: 0, kind: .gap(20), left: nil, right: nil)])
+    }
+}

@@ -215,6 +215,8 @@ final class Workspace {
     private(set) var gitStatuses: [String: GitFileStatus] = [:]
     /// HEAD contents of open files (for gutter change bars), keyed by path.
     private(set) var gitBases: [String: String] = [:]
+    /// The document shown as a diff against HEAD instead of its editor.
+    var diffDocumentID: UUID?
     @ObservationIgnored private var gitTask: Task<Void, Never>?
     @ObservationIgnored private var gitTopLevel: URL?
 

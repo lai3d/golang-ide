@@ -139,6 +139,11 @@ enum Snapshot {
                 if let action = actions[action] { workspace.requestFold(action) }
                 try? await Task.sleep(for: .milliseconds(500))
             }
+            if args.contains("--snapshot-diff"), let workspace, let document = workspace.activeDocument {
+                for _ in 0..<30 where workspace.gitBase(for: document) == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                workspace.diffDocumentID = document.id
+                try? await Task.sleep(for: .milliseconds(500))
+            }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()
                 try? await Task.sleep(for: .milliseconds(300))

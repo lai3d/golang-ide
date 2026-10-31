@@ -249,6 +249,9 @@ struct EditorArea: View {
                     ForEach(workspace.documents) { document in
                         DocumentEditor(document: document, isActive: document === workspace.activeDocument)
                     }
+                    if let document = workspace.activeDocument, workspace.diffDocumentID == document.id {
+                        DiffView(document: document)
+                    }
                     if workspace.documents.isEmpty {
                         Text("Select a file")
                             .foregroundStyle(.secondary)
@@ -362,6 +365,17 @@ struct TabBar: View {
                 }
             }
             Spacer(minLength: 0)
+            if let document = workspace.activeDocument, workspace.gitBase(for: document) != nil {
+                Button {
+                    workspace.diffDocumentID = workspace.diffDocumentID == document.id ? nil : document.id
+                } label: {
+                    Image(systemName: "arrow.left.arrow.right.square")
+                        .foregroundStyle(workspace.diffDocumentID == document.id ? Color.accentColor : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Compare with HEAD (⌥⌘D)")
+                .padding(.horizontal, 8)
+            }
         }
         .frame(height: 30)
     }

@@ -207,6 +207,14 @@ struct GoIDECommands: Commands {
                 Button("Remove All Breakpoints") { workspace.clearBreakpoints() }
                     .disabled(workspace.breakpoints.isEmpty)
             }
+            CommandMenu("Git") {
+                Button("Compare with HEAD") {
+                    guard let document = workspace.activeDocument else { return }
+                    workspace.diffDocumentID = workspace.diffDocumentID == document.id ? nil : document.id
+                }
+                .keyboardShortcut("d", modifiers: [.option, .command])
+                .disabled(workspace.activeDocument.map { workspace.gitBase(for: $0) == nil } ?? true)
+            }
             CommandMenu("Go") {
                 Button("Run") { workspace.runGo(["run", "."]) }
                     .keyboardShortcut("r")

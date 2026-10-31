@@ -177,3 +177,88 @@ public struct BlameLine: Sendable, Hashable {
         return BlameLine(commit: String(commit), author: author, date: Date(timeIntervalSince1970: time), summary: summary)
     }
 }
+
+/// One row of a side-by-side diff.
+public struct DiffRow: Sendable, Hashable, Identifiable {
+    public enum Kind: Sendable, Hashable {
+        case same, added, removed, changed
+        /// Unchanged lines folded away.
+        case gap(Int)
+    }
+
+    public let id: Int
+    public let kind: Kind
+    /// One-based line numbers and texts; nil where that side has no line.
+    public let left: (number: Int, text: String)?
+    public let right: (number: Int, text: String)?
+
+    public static func == (a: DiffRow, b: DiffRow) -> Bool {
+        a.id == b.id && a.kind == b.kind && a.left?.number == b.left?.number && a.left?.text == b.left?.text
+            && a.right?.number == b.right?.number && a.right?.text == b.right?.text
+    }
+
+    public func hash(into hasher: inout Hasher) { hasher.combine(id) }
+}
+
+public enum SideBySideDiff {
+    /// Aligned rows: removed/added lines in a hunk pair up as `changed`; long unchanged
+    /// stretches collapse to a `gap`, keeping `context` lines around each change.
+    public static func rows(base: String, current: String, context: Int = 3) -> [DiffRow] {
+        var old = base.components(separatedBy: "\n"), new = current.components(separatedBy: "\n")
+        if old.last == "" { old.removeLast() }
+        if new.last == "" { new.removeLast() }
+        var removed = Set<Int>(), inserted = Set<Int>()
+        for change in new.difference(from: old) {
+            switch change {
+            case .remove(let offset, _, _): removed.insert(offset)
+            case .insert(let offset, _, _): inserted.insert(offset)
+            }
+        }
+        // Full alignment first.
+        var full: [(DiffRow.Kind, (Int, String)?, (Int, String)?)] = []
+        var i = 0, j = 0
+        while i < old.count || j < new.count {
+            if removed.contains(i) || inserted.contains(j) {
+                var gone: [Int] = [], added: [Int] = []
+                var progressed = true
+                while progressed {
+                    progressed = false
+                    while i < old.count, removed.contains(i) { gone.append(i); i += 1; progressed = true }
+                    while j < new.count, inserted.contains(j) { added.append(j); j += 1; progressed = true }
+                }
+                for k in 0..<max(gone.count, added.count) {
+                    let l = k < gone.count ? (gone[k] + 1, old[gone[k]]) : nil
+                    let r = k < added.count ? (added[k] + 1, new[added[k]]) : nil
+                    full.append((l != nil && r != nil ? .changed : (l != nil ? .removed : .added), l, r))
+                }
+            } else {
+                full.append((.same, (i + 1, old[i]), (j + 1, new[j])))
+                i += 1
+                j += 1
+            }
+        }
+        // Keep `context` lines around changes; fold the rest.
+        let changed = full.indices.filter { full[$0].0 != .same }
+        var keep = Set<Int>()
+        for index in changed {
+            for k in max(0, index - context)...min(full.count - 1, index + context) { keep.insert(k) }
+        }
+        var rows: [DiffRow] = []
+        var hidden = 0
+        for (index, entry) in full.enumerated() {
+            if keep.contains(index) {
+                if hidden > 0 {
+                    rows.append(DiffRow(id: rows.count, kind: .gap(hidden), left: nil, right: nil))
+                    hidden = 0
+                }
+                rows.append(DiffRow(id: rows.count, kind: entry.0,
+                                    left: entry.1.map { (number: $0.0, text: $0.1) },
+                                    right: entry.2.map { (number: $0.0, text: $0.1) }))
+            } else {
+                hidden += 1
+            }
+        }
+        if hidden > 0 { rows.append(DiffRow(id: rows.count, kind: .gap(hidden), left: nil, right: nil)) }
+        return rows
+    }
+}
