@@ -35,6 +35,8 @@ struct CodeEditorView: NSViewRepresentable {
     var settings = EditorSettings()
     var showInlayHints = true
     var languageServerEpoch = 0
+    /// The file at HEAD, for change bars (nil: untracked or not in Git).
+    var gitBase: String?
     var diagnostics: [Diagnostic]
     var reveal: RevealTarget?
     var quickFixRequest = 0
@@ -144,6 +146,10 @@ struct CodeEditorView: NSViewRepresentable {
             coordinator.scheduleInlayHints(after: .milliseconds(300))
         }
         coordinator.updateTestMarkers()
+        if coordinator.appliedGitBase != gitBase {
+            coordinator.appliedGitBase = gitBase
+            coordinator.scheduleLineChanges(after: .zero)
+        }
         if let ruler = coordinator.ruler {
             if ruler.breakpoints != breakpoints { ruler.breakpoints = breakpoints }
             if ruler.executionLine != executionLine { ruler.executionLine = executionLine }
@@ -211,6 +217,7 @@ struct CodeEditorView: NSViewRepresentable {
             shiftInlayHints()
             applyStyling()
             scheduleInlayHints(after: .milliseconds(600))
+            scheduleLineChanges(after: .milliseconds(250))
             endHover()
             clearOccurrences()  // stale after an edit; the selection change re-requests
 
@@ -249,6 +256,26 @@ struct CodeEditorView: NSViewRepresentable {
             ruler?.needsDisplay = true
             if signaturePopup.isVisible { scheduleSignatureHelp(after: .milliseconds(80)) }
             scheduleOccurrences()
+        }
+
+        // MARK: Git change bars
+
+        var appliedGitBase: String??
+        private var lineChangesTask: Task<Void, Never>?
+
+        func scheduleLineChanges(after delay: Duration) {
+            lineChangesTask?.cancel()
+            guard let base = parent.gitBase else {
+                ruler?.lineChanges = LineChanges()
+                return
+            }
+            lineChangesTask = Task { [weak self] in
+                if delay > .zero { try? await Task.sleep(for: delay) }
+                guard !Task.isCancelled, let self, let text = self.textView?.string else { return }
+                let changes = await Task.detached(priority: .utility) { LineChanges.compute(base: base, current: text) }.value
+                guard !Task.isCancelled else { return }
+                self.ruler?.lineChanges = changes
+            }
         }
 
         // MARK: Inlay hints

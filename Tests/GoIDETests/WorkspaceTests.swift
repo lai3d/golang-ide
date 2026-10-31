@@ -309,3 +309,33 @@ import GoIDECore
         #expect(workspace.outline.map(\.name).contains("Greeter"))
     }
 }
+
+@MainActor
+@Suite struct WorkspaceGitTests {
+    @Test(.enabled(if: GoIDECore.ToolLocator.find("git") != nil), .timeLimit(.minutes(1)))
+    func tracksBranchStatusesAndBases() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-ws-git-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.canonicalFileURL
+        Git.run(["init", "-q", "-b", "feature"], in: dir)
+        try "module example.com/g\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
+        try "package main\n\nfunc main() {}\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+        Git.run(["add", "."], in: dir)
+        Git.run(["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "init"], in: dir)
+        try "package main\n\n// changed\nfunc main() {}\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+        try "package main\n".write(to: dir.appendingPathComponent("new.go"), atomically: true, encoding: .utf8)
+
+        let workspace = Workspace()
+        await workspace.openFolder(dir)
+        for _ in 0..<50 where workspace.gitBranch == nil { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(workspace.gitBranch == "feature")
+        #expect(workspace.gitStatus(for: dir.appendingPathComponent("main.go")) == .modified)
+        #expect(workspace.gitStatus(for: dir.appendingPathComponent("new.go")) == .untracked)
+        #expect(workspace.gitStatus(for: dir.appendingPathComponent("go.mod")) == nil)
+        let main = try #require(workspace.activeDocument)
+        #expect(workspace.gitBase(for: main) == "package main\n\nfunc main() {}\n")
+        let changes = LineChanges.compute(base: workspace.gitBase(for: main)!, current: main.text)
+        #expect(changes.lines == [2: .added])
+    }
+}

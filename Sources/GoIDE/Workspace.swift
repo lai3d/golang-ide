@@ -168,6 +168,13 @@ final class Workspace {
     private(set) var debugSession: DebugSession?
     private(set) var executionLocation: ExecutionLocation?
 
+    // Git
+    private(set) var gitBranch: String?
+    private(set) var gitStatuses: [String: GitFileStatus] = [:]
+    /// HEAD contents of open files (for gutter change bars), keyed by path.
+    private(set) var gitBases: [String: String] = [:]
+    @ObservationIgnored private var gitTask: Task<Void, Never>?
+
     // Call hierarchy
     private(set) var callRoot: CallNode?
     var callDirection: CallDirection = .incoming
@@ -250,6 +257,9 @@ final class Workspace {
         rootURL = url
         fileTree = FileNode.loadTree(at: url)
         startWatching(url)
+        gitBranch = nil
+        gitStatuses = [:]
+        gitBases = [:]
         documents = []
         activeDocument = nil
         diagnostics = [:]
@@ -259,6 +269,7 @@ final class Workspace {
         if openDefaultFile, let file = Self.defaultFile(in: fileTree) {
             openFile(file)
         }
+        refreshGit()
         await startLanguageServer(root: url)
     }
 
@@ -278,11 +289,53 @@ final class Workspace {
 
     /// Reacts to files changed on disk (by us, an external editor, git, go generate…).
     func handleFileSystemChanges(_ paths: [String]) {
+        // Commits, checkouts, staging… only touch .git: refresh Git state for those too.
+        if paths.contains(where: { $0.contains("/.git/") || $0.hasSuffix("/.git") }) { refreshGit() }
         let relevant = paths.filter { !isIgnored(path: $0) }
         guard !relevant.isEmpty else { return }
         reloadTree()
         notifyWatchedFiles(relevant)
         for document in documents { syncWithDisk(document) }
+        refreshGit()
+    }
+
+    // MARK: - Git
+
+    /// Re-reads branch, file statuses and HEAD contents of open files (debounced, off the main thread).
+    func refreshGit() {
+        gitTask?.cancel()
+        guard let rootURL else { return }
+        let files = documents.map(\.url)
+        gitTask = Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            let snapshot = await Task.detached(priority: .utility) { () -> (String?, [String: GitFileStatus], [String: String])? in
+                guard let top = Git.topLevel(of: rootURL) else { return nil }
+                var bases: [String: String] = [:]
+                for url in files {
+                    if let contents = Git.headContents(of: url, topLevel: top) { bases[url.canonicalFileURL.path] = contents }
+                }
+                return (Git.currentBranch(in: top), Git.status(in: top), bases)
+            }.value
+            guard !Task.isCancelled else { return }
+            gitBranch = snapshot?.0
+            gitStatuses = snapshot?.1 ?? [:]
+            gitBases = snapshot?.2 ?? [:]
+        }
+    }
+
+    func gitStatus(for url: URL) -> GitFileStatus? {
+        gitStatuses[Self.key(for: url)]
+    }
+
+    /// Whether a folder contains changed files.
+    func gitHasChanges(under directory: URL) -> Bool {
+        let prefix = Self.key(for: directory) + "/"
+        return gitStatuses.keys.contains { $0.hasPrefix(prefix) }
+    }
+
+    func gitBase(for document: Document) -> String? {
+        gitBases[Self.key(for: document.url)]
     }
 
     /// Hidden files and build/VCS folders inside the project don't matter to us.
@@ -436,6 +489,7 @@ final class Workspace {
         documents.insert(document, at: insertIndex)
         activeDocument = document
         sendDidOpen(document)
+        refreshGit()  // fetch its HEAD version for change bars
         return document
     }
 
@@ -581,6 +635,7 @@ final class Workspace {
         do {
             try document.text.write(to: document.url, atomically: true, encoding: .utf8)
             document.isDirty = false
+            refreshGit()
             if lspReady, document.isGo {
                 try? lsp?.notify("textDocument/didSave", params: [
                     "textDocument": ["uri": .string(document.url.absoluteString)],

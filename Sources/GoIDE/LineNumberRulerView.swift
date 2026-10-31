@@ -29,6 +29,11 @@ final class LineNumberRulerView: NSView {
     var breakpoints: Set<Int> = [] {
         didSet { if breakpoints != oldValue { needsDisplay = true } }
     }
+    /// Changes against HEAD: bars at the right edge.
+    var lineChanges = LineChanges() {
+        didSet { if lineChanges != oldValue { needsDisplay = true } }
+    }
+
     /// Zero-based line where the debugger is paused.
     var executionLine: Int? {
         didSet { if executionLine != oldValue { needsDisplay = true } }
@@ -132,6 +137,19 @@ final class LineNumberRulerView: NSView {
                 .foregroundColor: breakpoints.contains(line) ? NSColor.white
                     : isCaretLine ? NSColor.labelColor : NSColor.tertiaryLabelColor,
             ]
+            if let change = lineChanges.lines[line] {
+                (change == .added ? NSColor.systemGreen : NSColor.systemBlue).withAlphaComponent(0.8).setFill()
+                NSRect(x: bounds.maxX - 4, y: y, width: 3, height: fragment.height).fill()
+            }
+            if lineChanges.deletions.contains(line) {
+                let triangle = NSBezierPath()
+                triangle.move(to: NSPoint(x: bounds.maxX - 6, y: y - 4))
+                triangle.line(to: NSPoint(x: bounds.maxX - 1, y: y))
+                triangle.line(to: NSPoint(x: bounds.maxX - 6, y: y + 4))
+                triangle.close()
+                NSColor.systemRed.setFill()
+                triangle.fill()
+            }
             let label = "\(line + 1)" as NSString
             let size = label.size(withAttributes: attributes)
             label.draw(at: NSPoint(x: bounds.maxX - 8 - size.width, y: y + (fragment.height - size.height) / 2),

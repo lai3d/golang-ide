@@ -16,6 +16,7 @@ struct ContentView: View {
             }
         }
         .navigationTitle(workspace.rootURL?.lastPathComponent ?? "GoIDE")
+        .navigationSubtitle(workspace.gitBranch.map { "⎇ \($0)" } ?? "")
         .overlay(alignment: .top) {
             if workspace.isQuickOpenVisible {
                 ZStack(alignment: .top) {
@@ -108,9 +109,20 @@ struct FileTreeView: View {
             set: { if let url = $0 { workspace.openFile(url) } })
 
         List(workspace.fileTree, children: \.children, selection: selection) { node in
-            Label(node.name, systemImage: Self.icon(for: node))
-                .lineLimit(1)
-                .contextMenu { itemMenu(for: node) }
+            HStack(spacing: 4) {
+                Label(node.name, systemImage: Self.icon(for: node))
+                    .lineLimit(1)
+                    .foregroundStyle(gitColor(for: node) ?? .primary)
+                Spacer(minLength: 0)
+                if let status = workspace.gitStatus(for: node.url) {
+                    Text(status.rawValue)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Self.color(for: status))
+                } else if node.isDirectory, workspace.gitHasChanges(under: node.url) {
+                    Circle().fill(.secondary).frame(width: 5, height: 5)
+                }
+            }
+            .contextMenu { itemMenu(for: node) }
         }
         .listStyle(.sidebar)
         .contextMenu {
@@ -162,6 +174,18 @@ struct FileTreeView: View {
                              message: "Open tabs for it are closed without saving.",
                              confirm: "Move to Trash") else { return }
         Prompt.attempt { try workspace.trashItem(at: node.url) }
+    }
+
+    private func gitColor(for node: FileNode) -> Color? {
+        workspace.gitStatus(for: node.url).map(Self.color(for:))
+    }
+
+    static func color(for status: GitFileStatus) -> Color {
+        switch status {
+        case .modified, .renamed: .orange
+        case .added, .untracked: .green
+        case .deleted, .conflicted: .red
+        }
     }
 
     private static func icon(for node: FileNode) -> String {
@@ -249,6 +273,7 @@ struct DocumentEditor: View {
             settings: EditorSettings(fontSize: fontSize, tabWidth: tabWidth),
             showInlayHints: showInlayHints,
             languageServerEpoch: workspace.languageServerEpoch,
+            gitBase: workspace.gitBase(for: document),
             diagnostics: workspace.diagnostics(for: document),
             reveal: document.revealTarget,
             quickFixRequest: workspace.quickFixRequest,
