@@ -109,8 +109,12 @@ struct GoIDEApp: App {
                     .keyboardShortcut("r")
                 Button("Build") { workspace.runGo(["build", "./..."]) }
                     .keyboardShortcut("b")
-                Button("Test") { workspace.runGo(["test", "./..."]) }
+                Button("Test All") { workspace.runTests(.all) }
                     .keyboardShortcut("u")
+                Button("Test Package") { workspace.runActivePackageTests() }
+                    .keyboardShortcut("u", modifiers: [.control, .command])
+                Button("Run Test at Cursor") { workspace.runTestAtCaret() }
+                    .keyboardShortcut("u", modifiers: [.control, .option, .command])
                 Divider()
                 Button("Stop") { workspace.stopRun() }
                     .keyboardShortcut(".")

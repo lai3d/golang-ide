@@ -32,7 +32,7 @@ struct ContentView: View {
                     Label("Build", systemImage: "hammer")
                 }
                 .help("go build ./... (⌘B)")
-                Button { workspace.runGo(["test", "./..."]) } label: {
+                Button { workspace.runTests(.all) } label: {
                     Label("Test", systemImage: "checkmark.diamond")
                 }
                 .help("go test ./... (⌘U)")
@@ -232,6 +232,8 @@ struct DocumentEditor: View {
         CodeEditorView(
             text: document.text,
             highlightGo: document.isGo,
+            isTestFile: document.name.hasSuffix("_test.go"),
+            testStatuses: workspace.testStatuses,
             isEditable: !document.isReadOnly,
             isActive: isActive,
             diagnostics: workspace.diagnostics(for: document),
@@ -246,6 +248,7 @@ struct DocumentEditor: View {
                 rename: { offset in Task { await workspace.promptRename(in: document, at: offset) } },
                 codeActions: { await workspace.codeActions(in: document, at: $0, length: $1) },
                 performAction: { action in Task { await workspace.perform(action) } },
+                runTest: { name in workspace.runTests(.test(name, in: document.url.deletingLastPathComponent())) },
                 caretMoved: { document.caretOffset = $0 }),
             onChange: { workspace.updateText(of: document, to: $0) })
     }
@@ -345,6 +348,13 @@ struct TabItem: View {
 struct BottomPanel: View {
     @Environment(Workspace.self) private var workspace
 
+    private var testsLabel: String {
+        let report = workspace.testReport
+        if report.failed > 0 { return "Tests ✗\(report.failed)" }
+        if report.passed > 0 { return "Tests ✓\(report.passed)" }
+        return "Tests"
+    }
+
     var body: some View {
         @Bindable var workspace = workspace
         VStack(spacing: 0) {
@@ -352,6 +362,7 @@ struct BottomPanel: View {
                 Picker("Panel", selection: $workspace.bottomTab) {
                     Text("Problems (\(workspace.allProblems.count))").tag(BottomTab.problems)
                     Text("References").tag(BottomTab.references)
+                    Text(testsLabel).tag(BottomTab.tests)
                     Text("Output").tag(BottomTab.output)
                 }
                 .pickerStyle(.segmented)
@@ -371,6 +382,7 @@ struct BottomPanel: View {
             switch workspace.bottomTab {
             case .problems: ProblemsList()
             case .references: ReferencesList()
+            case .tests: TestsPanel()
             case .output: OutputView()
             }
         }

@@ -70,11 +70,20 @@ enum Snapshot {
                 workspace.sidebarMode = .outline
                 try? await Task.sleep(for: .milliseconds(1200))
             }
+            if args.contains("--snapshot-tests"), let workspace {
+                workspace.runTests(.all)
+                for _ in 0..<150 where workspace.isRunning { try? await Task.sleep(for: .milliseconds(100)) }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()
                 try? await Task.sleep(for: .milliseconds(300))
             }
 
+            if ProcessInfo.processInfo.environment["GOIDE_DEBUG_LAYOUT"] != nil,
+               let textView = NSApp.windows.first?.firstResponder as? NSTextView, let scroll = textView.enclosingScrollView {
+                print("clip bounds=\(scroll.contentView.bounds) insets=\(scroll.contentView.contentInsets) scroll=\(scroll.frame)")
+            }
             if let window = NSApp.windows.first(where: { $0.isVisible && $0.parent == nil && $0.contentView != nil }),
                let image = render(window) {
                 try? image.write(to: URL(fileURLWithPath: path))

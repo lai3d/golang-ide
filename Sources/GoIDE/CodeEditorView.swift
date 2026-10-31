@@ -12,6 +12,7 @@ struct EditorServices {
     var rename: @MainActor (Int) -> Void
     var codeActions: @MainActor (_ offset: Int, _ length: Int) async -> [CodeAction]
     var performAction: @MainActor (CodeAction) -> Void
+    var runTest: @MainActor (String) -> Void
     var caretMoved: @MainActor (Int) -> Void
 }
 
@@ -20,6 +21,8 @@ struct EditorServices {
 struct CodeEditorView: NSViewRepresentable {
     var text: String
     var highlightGo: Bool
+    var isTestFile = false
+    var testStatuses: [String: GoTestResult.Status] = [:]
     var isEditable: Bool
     var isActive: Bool
     var diagnostics: [Diagnostic]
@@ -30,7 +33,7 @@ struct CodeEditorView: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeNSView(context: Context) -> NSScrollView {
+    func makeNSView(context: Context) -> EditorContainerView {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
@@ -82,10 +85,9 @@ struct CodeEditorView: NSViewRepresentable {
             coordinator, selector: #selector(Coordinator.didScroll(_:)),
             name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
 
-        let ruler = LineNumberRulerView(textView: textView, scrollView: scrollView)
-        scrollView.verticalRulerView = ruler
-        scrollView.hasVerticalRuler = true
-        scrollView.rulersVisible = true
+        let ruler = LineNumberRulerView(textView: textView)
+        ruler.onRunTest = { [weak coordinator] name in coordinator?.parent.services.runTest(name) }
+        let container = EditorContainerView(scrollView: scrollView, gutter: ruler)
 
         coordinator.textView = textView
         coordinator.ruler = ruler
@@ -94,18 +96,18 @@ struct CodeEditorView: NSViewRepresentable {
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         ruler.textDidChange()
         coordinator.applyStyling()
-        return scrollView
+        return container
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    func updateNSView(_ container: EditorContainerView, context: Context) {
+        let scrollView = container.scrollView
         let coordinator = context.coordinator
         coordinator.parent = self
         guard let textView = coordinator.textView else { return }
         if textView.isEditable != isEditable { textView.isEditable = isEditable }
         if coordinator.isActive != isActive {
-            scrollView.isHidden = !isActive
+            container.isHidden = !isActive
             if isActive {
-                scrollView.tile()
                 if let window = textView.window {
                     window.makeFirstResponder(textView)
                     coordinator.isActive = true
@@ -122,6 +124,7 @@ struct CodeEditorView: NSViewRepresentable {
         } else if coordinator.appliedDiagnostics != diagnostics || coordinator.appliedHighlightGo != highlightGo {
             coordinator.applyStyling()
         }
+        coordinator.updateTestMarkers()
 
         if quickFixRequest != coordinator.lastQuickFixRequest {
             coordinator.lastQuickFixRequest = quickFixRequest
@@ -134,7 +137,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
     }
 
-    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+    static func dismantleNSView(_ container: EditorContainerView, coordinator: Coordinator) {
         coordinator.dismissPopups()
     }
 
@@ -465,7 +468,6 @@ struct CodeEditorView: NSViewRepresentable {
                 }
                 return
             }
-            scrollView.tile()  // lay out ruler + clip view before measuring
             let text = textView.string as NSString
             let location = LineIndex(textView.string).offset(of: reveal.position)
             let length = max(0, min(reveal.length, text.length - location))
@@ -507,6 +509,25 @@ struct CodeEditorView: NSViewRepresentable {
             origin.y = min(max(-insets.top, origin.y), maxY)
             clip.scroll(to: origin)
             scrollView.reflectScrolledClipView(clip)
+        }
+
+        // MARK: Test markers
+
+        private var testMarkerKey = ""
+
+        /// ▶ / ✓ / ✗ next to test functions in _test.go files.
+        func updateTestMarkers(force: Bool = false) {
+            guard let textView, let ruler else { return }
+            guard parent.isTestFile else {
+                if !ruler.testMarkers.isEmpty { ruler.testMarkers = [:] }
+                return
+            }
+            let tests = GoTestFinder.testFunctions(in: textView.string)
+            let key = tests.map { "\($0.name)@\($0.line):\(String(describing: parent.testStatuses[$0.name]))" }.joined(separator: ",")
+            guard force || key != testMarkerKey else { return }
+            testMarkerKey = key
+            ruler.testMarkers = Dictionary(tests.map { ($0.line, LineNumberRulerView.TestMarker(
+                name: $0.name, status: parent.testStatuses[$0.name])) }, uniquingKeysWith: { a, _ in a })
         }
 
         // MARK: Definition & misc
@@ -578,6 +599,7 @@ struct CodeEditorView: NSViewRepresentable {
 
         @objc func didScroll(_ notification: Notification) {
             dismissPopups()
+            ruler?.needsDisplay = true  // the gutter is a sibling view: redraw to follow
         }
 
         // MARK: Styling
@@ -615,6 +637,7 @@ struct CodeEditorView: NSViewRepresentable {
                 markers[line] = diagnostic.severity
             }
             ruler?.diagnosticMarkers = markers
+            updateTestMarkers(force: true)
 
             appliedDiagnostics = parent.diagnostics
             appliedHighlightGo = parent.highlightGo
@@ -727,4 +750,31 @@ final class ActionMenuItem: NSMenuItem {
     required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     @objc private func run() { handler() }
+}
+
+/// Gutter + scroll view side by side.
+final class EditorContainerView: NSView {
+    let scrollView: NSScrollView
+    let gutter: LineNumberRulerView
+
+    init(scrollView: NSScrollView, gutter: LineNumberRulerView) {
+        self.scrollView = scrollView
+        self.gutter = gutter
+        super.init(frame: .zero)
+        addSubview(gutter)
+        addSubview(scrollView)
+        gutter.onThicknessChange = { [weak self] in self?.needsLayout = true }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var isFlipped: Bool { true }
+
+    override func layout() {
+        super.layout()
+        let width = gutter.ruleThickness
+        gutter.frame = NSRect(x: 0, y: 0, width: width, height: bounds.height)
+        scrollView.frame = NSRect(x: width, y: 0, width: max(0, bounds.width - width), height: bounds.height)
+        gutter.needsDisplay = true
+    }
 }

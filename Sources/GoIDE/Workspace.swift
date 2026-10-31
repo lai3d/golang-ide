@@ -3,7 +3,13 @@ import GoIDECore
 import Observation
 
 enum BottomTab: Hashable {
-    case problems, references, output
+    case problems, references, tests, output
+}
+
+enum TestScope: Equatable {
+    case all
+    case package(URL)
+    case test(String, in: URL)
 }
 
 enum SidebarMode: Hashable {
@@ -123,6 +129,15 @@ final class Workspace {
 
     // Outline of the active document
     private(set) var outline: [SymbolNode] = []
+
+    // Tests
+    private(set) var testReport = GoTestReport()
+    private(set) var testRunTitle = ""
+    var selectedTestID: String?
+    /// Latest status per test name, for gutter markers.
+    var testStatuses: [String: GoTestResult.Status] {
+        Dictionary(testReport.tests.compactMap { t in t.name.map { ($0, t.status) } }, uniquingKeysWith: { $1 })
+    }
 
     // Find references
     private(set) var referenceResults: [SearchFileResult] = []
@@ -1077,6 +1092,129 @@ final class Workspace {
         ]
     }
 
+    // MARK: - Tests
+
+    /// Runs `go test -json` for a scope and streams results into `testReport`.
+    func runTests(_ scope: TestScope) {
+        guard let rootURL, !isRunning else { return }
+        guard let go = ToolLocator.find("go") else {
+            output = "go not found. Install Go from https://go.dev/dl/\n"
+            bottomTab = .output
+            return
+        }
+        saveAll()
+        var arguments = ["test", "-json"]
+        switch scope {
+        case .all:
+            arguments.append("./...")
+            testRunTitle = "All tests"
+        case .package(let dir):
+            arguments.append(packagePattern(for: dir))
+            testRunTitle = "Package \(packagePattern(for: dir))"
+        case .test(let name, let dir):
+            arguments += ["-run", "^\(NSRegularExpression.escapedPattern(for: name))$", packagePattern(for: dir)]
+            testRunTitle = name
+        }
+        testReport = GoTestReport()
+        selectedTestID = nil
+        output = "$ go \(arguments.joined(separator: " "))\n"
+        bottomTab = .tests
+        isRunning = true
+
+        let process = Process()
+        process.executableURL = go
+        process.arguments = arguments
+        process.currentDirectoryURL = rootURL
+        process.environment = ToolLocator.environment()
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        let buffer = LineBuffer()
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            let lines = data.isEmpty ? buffer.flush() : buffer.append(data)
+            if data.isEmpty { handle.readabilityHandler = nil }
+            guard !lines.isEmpty else { return }
+            Task { @MainActor in lines.forEach { self.consumeTestLine($0) } }
+        }
+        process.terminationHandler = { proc in
+            let status = proc.terminationStatus
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(80))  // let the last lines land
+                self.isRunning = false
+                self.runProcess = nil
+                let r = self.testReport
+                self.appendOutput("\n[\(r.passed) passed, \(r.failed) failed, \(r.skipped) skipped — exit \(status)]\n")
+                if r.tests.isEmpty, !r.buildOutput.isEmpty { self.bottomTab = .output }  // build failed
+                self.selectedTestID = self.selectedTestID ?? r.tests.first { $0.status == .failed }?.id
+            }
+        }
+        do {
+            try process.run()
+            runProcess = process
+        } catch {
+            isRunning = false
+            appendOutput("Failed to start go: \(error.localizedDescription)\n")
+        }
+    }
+
+    private func consumeTestLine(_ line: String) {
+        testReport.consume(line: line)
+        if !line.hasPrefix("{") { appendOutput(line + "\n") }
+        else if let data = line.data(using: .utf8),
+                let event = try? JSONDecoder().decode(GoTestEvent.self, from: data),
+                let text = event.output, event.action == "output" || event.action == "build-output" {
+            appendOutput(text)
+        }
+    }
+
+    /// Runs the test function around the caret, else the active file's package.
+    func runTestAtCaret() {
+        guard let document = activeDocument else { return runTests(.all) }
+        let dir = document.url.deletingLastPathComponent()
+        if document.name.hasSuffix("_test.go"),
+           let name = GoTestFinder.enclosingTest(in: document.text, at: document.caretOffset) {
+            runTests(.test(name, in: dir))
+        } else {
+            runTests(.package(dir))
+        }
+    }
+
+    func runActivePackageTests() {
+        guard let document = activeDocument else { return runTests(.all) }
+        runTests(.package(document.url.deletingLastPathComponent()))
+    }
+
+    private func packagePattern(for dir: URL) -> String {
+        let relative = displayPath(Self.key(for: dir))
+        return relative == Self.key(for: dir) || relative.isEmpty ? "." : "./" + relative
+    }
+
+    /// Opens a test function's declaration (searches the project's _test.go files).
+    func revealTest(named name: String) {
+        guard let rootURL else { return }
+        let base = String(name.split(separator: "/").first ?? Substring(name))
+        for path in ProjectSearch.files(under: rootURL) where path.hasSuffix("_test.go") {
+            let key = Self.key(for: URL(fileURLWithPath: path))
+            let text = documents.first { Self.key(for: $0.url) == key }?.text
+                ?? (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+            if let found = GoTestFinder.testFunctions(in: text).first(where: { $0.name == base }) {
+                navigate(to: URL(fileURLWithPath: path), position: TextPosition(line: found.line, character: 5))
+                return
+            }
+        }
+    }
+
+    /// Opens `file.go:line` from test output (resolved by file name within the project).
+    func revealOutputReference(file: String, line: Int) {
+        guard let rootURL else { return }
+        let suffix = "/" + (file as NSString).lastPathComponent
+        let candidates = ProjectSearch.files(under: rootURL).filter { $0.hasSuffix(suffix) }
+        let match = candidates.first { $0.hasSuffix("/" + file) } ?? candidates.first
+        guard let path = match else { return }
+        navigate(to: URL(fileURLWithPath: path), position: TextPosition(line: max(line - 1, 0), character: 0))
+    }
+
     // MARK: - go run / build / test
 
     func runGo(_ arguments: [String]) {
@@ -1150,5 +1288,30 @@ final class Workspace {
     private static func defaultFile(in nodes: [FileNode]) -> URL? {
         let files = nodes.filter { !$0.isDirectory }
         return (files.first { $0.name == "main.go" } ?? files.first { $0.url.pathExtension == "go" })?.url
+    }
+}
+
+/// Splits a byte stream into lines across reads (used off the main thread).
+final class LineBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending = Data()
+
+    func append(_ data: Data) -> [String] {
+        lock.withLock {
+            pending.append(data)
+            guard let last = pending.lastIndex(of: 0x0A) else { return [] }
+            let complete = pending[pending.startIndex...last]
+            pending = Data(pending[pending.index(after: last)...])
+            return String(decoding: complete, as: UTF8.self)
+                .split(separator: "\n", omittingEmptySubsequences: false).dropLast().map(String.init)
+        }
+    }
+
+    func flush() -> [String] {
+        lock.withLock {
+            defer { pending = Data() }
+            let rest = String(decoding: pending, as: UTF8.self)
+            return rest.isEmpty ? [] : [rest]
+        }
     }
 }

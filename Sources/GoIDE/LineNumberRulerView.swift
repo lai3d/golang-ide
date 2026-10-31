@@ -1,25 +1,46 @@
 import AppKit
 import GoIDECore
 
-/// Line numbers plus diagnostic markers, drawn alongside a TextKit 1 NSTextView.
-final class LineNumberRulerView: NSRulerView {
+/// Line numbers plus diagnostic/test markers for a TextKit 1 NSTextView. A plain view placed
+/// beside the scroll view (not an NSRulerView: rulers overlap the clip view via content insets,
+/// which confuses horizontal scrolling).
+final class LineNumberRulerView: NSView {
     private weak var textView: NSTextView?
+    /// Called when the width changes so the container can re-lay out.
+    var onThicknessChange: (() -> Void)?
+    private(set) var ruleThickness: CGFloat = 40 {
+        didSet { if ruleThickness != oldValue { onThicknessChange?() } }
+    }
     private var lineIndex = LineIndex("")
+
+    struct TestMarker: Equatable {
+        let name: String
+        let status: GoTestResult.Status?
+    }
+
+    /// Test functions per zero-based line: click to run.
+    var testMarkers: [Int: TestMarker] = [:] {
+        didSet { if testMarkers != oldValue { needsDisplay = true } }
+    }
+    var onRunTest: ((String) -> Void)?
 
     /// Worst diagnostic severity per zero-based line.
     var diagnosticMarkers: [Int: Diagnostic.Severity] = [:] {
         didSet { if diagnosticMarkers != oldValue { needsDisplay = true } }
     }
 
-    init(textView: NSTextView, scrollView: NSScrollView) {
-        super.init(scrollView: scrollView, orientation: .verticalRuler)
+    init(textView: NSTextView) {
+        super.init(frame: .zero)
         self.textView = textView
-        clientView = textView
         clipsToBounds = true  // macOS 14+ doesn't clip by default
         textDidChange()
     }
 
-    required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawHashMarksAndLabels(in: dirtyRect)
+    }
 
     override var isFlipped: Bool { true }
 
@@ -31,11 +52,26 @@ final class LineNumberRulerView: NSRulerView {
         let digits = max(3, String(lineIndex.lineCount).count)
         let digitWidth = ("8" as NSString).size(withAttributes: [.font: font]).width
         let thickness = ceil(CGFloat(digits) * digitWidth + 26)
-        if ruleThickness != thickness { ruleThickness = thickness }
+        ruleThickness = thickness
         needsDisplay = true
     }
 
-    override func drawHashMarksAndLabels(in rect: NSRect) {
+    override func mouseDown(with event: NSEvent) {
+        guard let textView, let line = line(at: convert(event.locationInWindow, from: nil)),
+              let test = testMarkers[line] else { return super.mouseDown(with: event) }
+        _ = textView
+        onRunTest?(test.name)
+    }
+
+    /// The zero-based line at a point in ruler coordinates.
+    private func line(at point: NSPoint) -> Int? {
+        guard let textView else { return nil }
+        let inText = textView.convert(point, from: self)
+        let index = textView.characterIndexForInsertion(at: NSPoint(x: 0, y: inText.y))
+        return lineIndex.position(of: index).line
+    }
+
+    private func drawHashMarksAndLabels(in rect: NSRect) {
         NSColor.textBackgroundColor.setFill()
         bounds.fill()
         NSColor.separatorColor.setFill()
@@ -58,7 +94,24 @@ final class LineNumberRulerView: NSRulerView {
             let size = label.size(withAttributes: attributes)
             label.draw(at: NSPoint(x: bounds.maxX - 8 - size.width, y: y + (fragment.height - size.height) / 2),
                        withAttributes: attributes)
-            if let severity = diagnosticMarkers[line] {
+            if let test = testMarkers[line] {
+                let (symbol, color): (String, NSColor) = switch test.status {
+                case .passed?: ("checkmark.circle.fill", .systemGreen)
+                case .failed?: ("xmark.circle.fill", .systemRed)
+                case .running?: ("clock.fill", .secondaryLabelColor)
+                default: ("play.fill", .systemGreen)
+                }
+                // Circle symbols: white glyph on a colored disc; play: just colored.
+                let palette: [NSColor] = symbol.hasSuffix("circle.fill") ? [.white, color] : [color]
+                let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .bold)
+                    .applying(.init(paletteColors: palette))
+                if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Run \(test.name)")?
+                    .withSymbolConfiguration(config) {
+                    let size = image.size
+                    image.draw(in: NSRect(x: 4, y: y + (fragment.height - size.height) / 2,
+                                          width: size.width, height: size.height))
+                }
+            } else if let severity = diagnosticMarkers[line] {
                 let color: NSColor = severity == .error ? .systemRed : .systemYellow
                 color.setFill()
                 NSBezierPath(ovalIn: NSRect(x: 5, y: y + fragment.height / 2 - 3.5, width: 7, height: 7)).fill()
