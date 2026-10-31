@@ -230,6 +230,8 @@ struct ExternalChangeBanner: View {
 
 struct DocumentEditor: View {
     @Environment(Workspace.self) private var workspace
+    @AppStorage(EditorSettings.fontSizeKey) private var fontSize = 13.0
+    @AppStorage(EditorSettings.tabWidthKey) private var tabWidth = 4
     let document: Document
     let isActive: Bool
 
@@ -243,6 +245,7 @@ struct DocumentEditor: View {
             executionLine: workspace.executionLine(for: document),
             isEditable: !document.isReadOnly,
             isActive: isActive,
+            settings: EditorSettings(fontSize: fontSize, tabWidth: tabWidth),
             diagnostics: workspace.diagnostics(for: document),
             reveal: document.revealTarget,
             quickFixRequest: workspace.quickFixRequest,

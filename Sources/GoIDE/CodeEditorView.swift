@@ -28,6 +28,7 @@ struct CodeEditorView: NSViewRepresentable {
     var executionLine: Int?
     var isEditable: Bool
     var isActive: Bool
+    var settings = EditorSettings()
     var diagnostics: [Diagnostic]
     var reveal: RevealTarget?
     var quickFixRequest = 0
@@ -68,9 +69,7 @@ struct CodeEditorView: NSViewRepresentable {
         textView.isContinuousSpellCheckingEnabled = false
         textView.isGrammarCheckingEnabled = false
         textView.smartInsertDeleteEnabled = false
-        textView.font = EditorTheme.font
-        textView.typingAttributes = EditorTheme.baseAttributes
-        textView.defaultParagraphStyle = EditorTheme.paragraphStyle
+        context.coordinator.applySettings(to: textView)
         textView.textContainerInset = NSSize(width: 6, height: 8)
         textView.backgroundColor = .textBackgroundColor
         textView.isEditable = isEditable
@@ -109,6 +108,10 @@ struct CodeEditorView: NSViewRepresentable {
         coordinator.parent = self
         guard let textView = coordinator.textView else { return }
         if textView.isEditable != isEditable { textView.isEditable = isEditable }
+        if coordinator.appliedSettings != settings {
+            coordinator.applySettings(to: textView)
+            coordinator.applyStyling()
+        }
         if coordinator.isActive != isActive {
             container.isHidden = !isActive
             if isActive {
@@ -520,6 +523,18 @@ struct CodeEditorView: NSViewRepresentable {
             scrollView.reflectScrolledClipView(clip)
         }
 
+        // MARK: Settings
+
+        var appliedSettings: EditorSettings?
+
+        func applySettings(to textView: NSTextView) {
+            let settings = parent.settings
+            textView.font = EditorTheme.font(settings)
+            textView.typingAttributes = EditorTheme.baseAttributes(settings)
+            textView.defaultParagraphStyle = EditorTheme.paragraphStyle(settings)
+            appliedSettings = settings
+        }
+
         // MARK: Test markers
 
         private var testMarkerKey = ""
@@ -619,7 +634,7 @@ struct CodeEditorView: NSViewRepresentable {
             let fullRange = NSRange(location: 0, length: storage.length)
 
             storage.beginEditing()
-            storage.setAttributes(EditorTheme.baseAttributes, range: fullRange)
+            storage.setAttributes(EditorTheme.baseAttributes(parent.settings), range: fullRange)
             if parent.highlightGo {
                 for token in GoHighlighter.tokenize(text) {
                     storage.addAttribute(.foregroundColor, value: EditorTheme.color(for: token.kind), range: token.range)

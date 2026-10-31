@@ -41,7 +41,7 @@ Estimates are Claude Code session time.
 
 | # | Item | Notes | Est. |
 |---|---|---|---|
-| 4.1 | ⬜ Settings | Font size, tab width, format on save, gopls/go/dlv paths | 0.5h |
+| 4.1 | ✅ Settings | ⌘, — font size, tab width, format on save, go/gopls/dlv path overrides | 0.5h |
 | 4.2 | ⬜ CI & packaging | GitHub Actions build + test, app icon, release `.app` zip | 0.5h |
 
 **User must do manually** (duration outside Claude's control): Apple Developer Program enrollment,

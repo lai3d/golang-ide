@@ -148,9 +148,8 @@ final class Workspace {
     // Find references
     private(set) var referenceResults: [SearchFileResult] = []
     private(set) var referenceTitle = ""
-    var formatOnSave = UserDefaults.standard.object(forKey: "formatOnSave") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(formatOnSave, forKey: "formatOnSave") }
-    }
+    /// Settings ▸ Editor (and Go ▸ Format on Save).
+    var formatOnSave: Bool { UserDefaults.standard.object(forKey: "formatOnSave") as? Bool ?? true }
 
     @ObservationIgnored private var lsp: LSPClient?
     @ObservationIgnored private var lspReady = false

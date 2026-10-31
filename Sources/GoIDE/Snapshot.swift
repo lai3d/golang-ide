@@ -103,7 +103,18 @@ enum Snapshot {
                let textView = NSApp.windows.first?.firstResponder as? NSTextView, let scroll = textView.enclosingScrollView {
                 print("clip bounds=\(scroll.contentView.bounds) insets=\(scroll.contentView.contentInsets) scroll=\(scroll.frame)")
             }
-            if let window = NSApp.windows.first(where: { $0.isVisible && $0.parent == nil && $0.contentView != nil }),
+            if args.contains("--snapshot-settings") {
+                // Trigger the app menu's "Settings…" (⌘,) item, as a user would.
+                if let appMenu = NSApp.mainMenu?.items.first?.submenu,
+                   let index = appMenu.items.firstIndex(where: { $0.keyEquivalent == "," }) {
+                    appMenu.performActionForItem(at: index)
+                }
+                try? await Task.sleep(for: .milliseconds(800))
+            }
+            let settingsWindow = args.contains("--snapshot-settings")
+                ? NSApp.windows.first { $0.isVisible && $0.parent == nil && $0 !== NSApp.windows.first }
+                : nil
+            if let window = settingsWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.parent == nil && $0.contentView != nil }),
                let image = render(window) {
                 try? image.write(to: URL(fileURLWithPath: path))
                 print("snapshot written to \(path)")

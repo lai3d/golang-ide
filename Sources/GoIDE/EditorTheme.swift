@@ -1,20 +1,31 @@
 import AppKit
 import GoIDECore
 
+/// User-adjustable editor settings (stored in UserDefaults, edited in Settings).
+struct EditorSettings: Equatable {
+    static let fontSizeKey = "editorFontSize"
+    static let tabWidthKey = "editorTabWidth"
+
+    var fontSize: Double = 13
+    var tabWidth: Int = 4
+}
+
 @MainActor
 enum EditorTheme {
-    static let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    static func font(_ settings: EditorSettings) -> NSFont {
+        .monospacedSystemFont(ofSize: settings.fontSize, weight: .regular)
+    }
 
-    static let paragraphStyle: NSParagraphStyle = {
+    static func paragraphStyle(_ settings: EditorSettings) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
-        let spaceWidth = (" " as NSString).size(withAttributes: [.font: font]).width
+        let spaceWidth = (" " as NSString).size(withAttributes: [.font: font(settings)]).width
         style.tabStops = []
-        style.defaultTabInterval = spaceWidth * 4  // gofmt uses tabs; show them 4 wide
+        style.defaultTabInterval = spaceWidth * CGFloat(settings.tabWidth)  // gofmt uses tabs
         return style
-    }()
+    }
 
-    static var baseAttributes: [NSAttributedString.Key: Any] {
-        [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraphStyle]
+    static func baseAttributes(_ settings: EditorSettings) -> [NSAttributedString.Key: Any] {
+        [.font: font(settings), .foregroundColor: NSColor.textColor, .paragraphStyle: paragraphStyle(settings)]
     }
 
     // System colors adapt to light and dark mode automatically.

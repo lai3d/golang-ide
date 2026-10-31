@@ -18,10 +18,18 @@ public enum ToolLocator {
         return dirs.filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
+    /// UserDefaults key for a user-chosen tool path (set in Settings).
+    public static func overrideKey(for name: String) -> String { "toolPath.\(name)" }
+
     public static func find(
         _ name: String,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> URL? {
+        if let custom = UserDefaults.standard.string(forKey: overrideKey(for: name))?
+            .trimmingCharacters(in: .whitespaces), !custom.isEmpty {
+            let path = (custom as NSString).expandingTildeInPath
+            return FileManager.default.isExecutableFile(atPath: path) ? URL(fileURLWithPath: path) : nil
+        }
         for dir in searchDirectories(environment: environment) {
             let path = (dir as NSString).appendingPathComponent(name)
             if FileManager.default.isExecutableFile(atPath: path) {

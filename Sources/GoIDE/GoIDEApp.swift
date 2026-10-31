@@ -30,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct GoIDEApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var workspace = Workspace()
-    private var bindableWorkspace: Bindable<Workspace> { Bindable(workspace) }
+    @AppStorage("formatOnSave") private var formatOnSave = true
 
     private static func functionKey(_ key: Int) -> KeyEquivalent {
         KeyEquivalent(Character(UnicodeScalar(UInt32(key))!))
@@ -158,10 +158,13 @@ struct GoIDEApp: App {
                 Button("Format Document") { Task { await workspace.formatActiveDocument() } }
                     .keyboardShortcut("f", modifiers: [.option, .shift])
                     .disabled(!workspace.isGoFile)
-                Toggle("Format on Save", isOn: bindableWorkspace.formatOnSave)
+                Toggle("Format on Save", isOn: $formatOnSave)
                 Divider()
                 Button("Restart gopls") { Task { await workspace.restartLanguageServer() } }
             }
+        }
+        Settings {
+            SettingsView().environment(workspace)
         }
     }
 }
