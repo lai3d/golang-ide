@@ -14,5 +14,6 @@ let package = Package(
         // SwiftUI/AppKit application shell.
         .executableTarget(name: "GoIDE", dependencies: ["GoIDECore"]),
         .testTarget(name: "GoIDECoreTests", dependencies: ["GoIDECore"]),
+        .testTarget(name: "GoIDETests", dependencies: ["GoIDE", "GoIDECore"]),
     ]
 )

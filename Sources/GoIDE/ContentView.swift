@@ -95,25 +95,19 @@ struct EditorArea: View {
     var body: some View {
         VSplitView {
             VStack(spacing: 0) {
-                EditorHeader()
+                TabBar()
                 Divider()
-                if workspace.currentFile != nil {
-                    CodeEditorView(
-                        text: workspace.text,
-                        highlightGo: workspace.isGoFile,
-                        isEditable: !workspace.isReadOnly,
-                        diagnostics: workspace.currentDiagnostics,
-                        reveal: workspace.revealTarget,
-                        services: EditorServices(
-                            completions: { await workspace.completions(at: $0) },
-                            hover: { await workspace.hover(at: $0) },
-                            definition: { offset in Task { await workspace.jumpToDefinition(at: offset) } },
-                            caretMoved: { workspace.caretOffset = $0 }),
-                        onChange: { workspace.updateText($0) })
-                } else {
-                    Text("Select a file")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ZStack {
+                    // Every open document keeps a live editor (undo, scroll, selection);
+                    // only the active one is shown.
+                    ForEach(workspace.documents) { document in
+                        DocumentEditor(document: document, isActive: document === workspace.activeDocument)
+                    }
+                    if workspace.documents.isEmpty {
+                        Text("Select a file")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
             .frame(minHeight: 200)
@@ -124,40 +118,116 @@ struct EditorArea: View {
     }
 }
 
-struct EditorHeader: View {
+struct DocumentEditor: View {
+    @Environment(Workspace.self) private var workspace
+    let document: Document
+    let isActive: Bool
+
+    var body: some View {
+        CodeEditorView(
+            text: document.text,
+            highlightGo: document.isGo,
+            isEditable: !document.isReadOnly,
+            isActive: isActive,
+            diagnostics: workspace.diagnostics(for: document),
+            reveal: document.revealTarget,
+            services: EditorServices(
+                completions: { await workspace.completions(in: document, at: $0) },
+                hover: { await workspace.hover(in: document, at: $0) },
+                definition: { offset in Task { await workspace.jumpToDefinition(from: document, at: offset) } },
+                caretMoved: { document.caretOffset = $0 }),
+            onChange: { workspace.updateText(of: document, to: $0) })
+    }
+}
+
+struct TabBar: View {
     @Environment(Workspace.self) private var workspace
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             Button { workspace.goBack() } label: { Image(systemName: "chevron.left") }
                 .buttonStyle(.borderless)
                 .disabled(!workspace.canGoBack)
                 .help("Go Back (⌃⌘←)")
-            if let file = workspace.currentFile {
-                Image(systemName: "doc.text").foregroundStyle(.secondary)
-                Text(file.lastPathComponent).fontWeight(.medium)
-                if workspace.isReadOnly {
-                    Text("Read Only")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(.quaternary, in: Capsule())
+                .padding(.horizontal, 8)
+            Divider()
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(workspace.documents) { document in
+                            TabItem(document: document,
+                                    title: title(for: document),
+                                    isActive: document === workspace.activeDocument)
+                                .id(document.id)
+                        }
+                    }
                 }
-                if workspace.isDirty {
-                    Circle().fill(.secondary).frame(width: 7, height: 7).help("Unsaved changes")
+                .onChange(of: workspace.activeDocument?.id) { _, id in
+                    if let id { proxy.scrollTo(id) }
                 }
-                Spacer()
-                Text(relativePath(file)).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
-            } else {
-                Spacer()
             }
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .frame(height: 28)
+        .frame(height: 30)
     }
 
-    private func relativePath(_ url: URL) -> String {
-        guard let root = workspace.rootURL?.path, url.path.hasPrefix(root) else { return url.path }
-        return String(url.path.dropFirst(root.count).drop(while: { $0 == "/" }))
+    /// Adds the parent folder when two open files share a name.
+    private func title(for document: Document) -> String {
+        let clash = workspace.documents.contains { $0 !== document && $0.name == document.name }
+        guard clash else { return document.name }
+        return "\(document.url.deletingLastPathComponent().lastPathComponent)/\(document.name)"
+    }
+}
+
+struct TabItem: View {
+    @Environment(Workspace.self) private var workspace
+    let document: Document
+    let title: String
+    let isActive: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: document.isReadOnly ? "lock.fill" : "doc.text")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            Text(title)
+                .lineLimit(1)
+                .foregroundStyle(isActive ? .primary : .secondary)
+            ZStack {
+                if document.isDirty && !isHovering {
+                    Circle().fill(.secondary).frame(width: 7, height: 7)
+                } else {
+                    Button { workspace.closeDocument(document) } label: {
+                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .opacity(isHovering || isActive ? 1 : 0)
+                    .help("Close Tab (⌘W)")
+                }
+            }
+            .frame(width: 14, height: 14)
+        }
+        .font(.system(size: 12))
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .frame(maxHeight: .infinity)
+        .background(isActive ? Color(nsColor: .textBackgroundColor) : Color.clear)
+        .overlay(alignment: .bottom) {
+            if isActive { Rectangle().fill(Color.accentColor).frame(height: 2) }
+        }
+        .overlay(alignment: .trailing) { Divider() }
+        .contentShape(Rectangle())
+        .onTapGesture { workspace.activate(document) }
+        .onHover { isHovering = $0 }
+        .help(document.url.path)
+        .contextMenu {
+            Button("Close Tab") { workspace.closeDocument(document) }
+            Button("Close Other Tabs") { workspace.closeOtherDocuments(than: document) }
+            Button("Close All Tabs") { workspace.closeAllDocuments() }
+            Divider()
+            Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([document.url]) }
+        }
     }
 }
 
@@ -209,7 +279,7 @@ struct ProblemsList: View {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Image(systemName: item.diagnostic.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                             .foregroundStyle(item.diagnostic.severity == .error ? .red : .yellow)
-                        Text("\(item.fileName):\(item.diagnostic.start.line + 1):\(item.diagnostic.start.character + 1)")
+                        Text("\(workspace.displayPath(item.path)):\(item.diagnostic.start.line + 1):\(item.diagnostic.start.character + 1)")
                             .font(.system(.body, design: .monospaced))
                             .foregroundStyle(.secondary)
                         Text(item.diagnostic.message)

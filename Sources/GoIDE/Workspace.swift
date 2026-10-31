@@ -6,7 +6,7 @@ enum BottomTab: Hashable {
     case problems, output
 }
 
-/// A request for the editor to move the caret to a position.
+/// A request for an editor to move the caret to a position.
 struct RevealTarget: Equatable {
     let id = UUID()
     let position: TextPosition
@@ -24,34 +24,64 @@ struct ProblemItem: Identifiable {
     var fileName: String { (path as NSString).lastPathComponent }
 }
 
-/// All state for one open project folder: files, editor buffer, gopls, and go commands.
+/// An open file: its text buffer and per-editor state.
+@MainActor
+@Observable
+final class Document: Identifiable {
+    let url: URL
+    let isReadOnly: Bool
+    var text: String
+    var isDirty = false
+    var revealTarget: RevealTarget?
+    @ObservationIgnored var version = 1
+    /// UTF-16 caret offset, reported by the editor.
+    @ObservationIgnored var caretOffset = 0
+
+    nonisolated var id: URL { url }
+    var name: String { url.lastPathComponent }
+    var isGo: Bool { url.pathExtension == "go" }
+
+    init(url: URL, text: String, isReadOnly: Bool) {
+        self.url = url
+        self.text = text
+        self.isReadOnly = isReadOnly
+    }
+}
+
+/// All state for one project folder: open documents, gopls, and go commands.
 @MainActor
 @Observable
 final class Workspace {
     private(set) var rootURL: URL?
     private(set) var fileTree: [FileNode] = []
-    private(set) var currentFile: URL?
-    private(set) var text = ""
-    private(set) var isDirty = false
+    private(set) var documents: [Document] = []
+    private(set) var activeDocument: Document?
     private(set) var diagnostics: [String: [Diagnostic]] = [:]  // keyed by normalized path
     private(set) var lspStatus = "gopls: not started"
     private(set) var output = ""
     private(set) var isRunning = false
-    var bottomTab: BottomTab = .problems
-    var revealTarget: RevealTarget?
     private(set) var backStack: [NavigationPoint] = []
-    /// UTF-16 caret offset in the current file, reported by the editor.
-    @ObservationIgnored var caretOffset = 0
+    var bottomTab: BottomTab = .problems
 
     @ObservationIgnored private var lsp: LSPClient?
     @ObservationIgnored private var lspReady = false
-    @ObservationIgnored private var documentVersion = 0
     @ObservationIgnored private var runProcess: Process?
     @ObservationIgnored private var handledLaunchArguments = false
 
-    var currentDiagnostics: [Diagnostic] {
-        guard let currentFile else { return [] }
-        return diagnostics[Self.key(for: currentFile)] ?? []
+    var currentFile: URL? { activeDocument?.url }
+    var isGoFile: Bool { activeDocument?.isGo ?? false }
+    var canGoBack: Bool { !backStack.isEmpty }
+    var dirtyDocuments: [Document] { documents.filter(\.isDirty) }
+
+    func diagnostics(for document: Document) -> [Diagnostic] {
+        diagnostics[Self.key(for: document.url)] ?? []
+    }
+
+    /// Path relative to the project root (or the full path outside it).
+    func displayPath(_ path: String) -> String {
+        guard let rootURL else { return path }
+        let root = Self.key(for: rootURL) + "/"
+        return path.hasPrefix(root) ? String(path.dropFirst(root.count)) : path
     }
 
     var allProblems: [ProblemItem] {
@@ -59,16 +89,6 @@ final class Workspace {
             diagnostics[path, default: []].map { ProblemItem(path: path, diagnostic: $0) }
         }
     }
-
-    var isGoFile: Bool { currentFile?.pathExtension == "go" }
-
-    /// Files outside the project (stdlib, module cache) are opened read-only.
-    var isReadOnly: Bool {
-        guard let currentFile, let rootURL else { return false }
-        return !Self.key(for: currentFile).hasPrefix(Self.key(for: rootURL) + "/")
-    }
-
-    var canGoBack: Bool { !backStack.isEmpty }
 
     // MARK: - Folder
 
@@ -83,33 +103,40 @@ final class Workspace {
         Task { await openFolder(url) }
     }
 
-    /// Opens a folder passed on the command line, e.g. `swift run GoIDE ./Examples/hello`.
+    /// `GoIDE <folder> [file…]` opens the folder, then any listed files as tabs.
     func handleLaunchArguments() async {
         guard !handledLaunchArguments else { return }
         handledLaunchArguments = true
-        for arg in CommandLine.arguments.dropFirst() {
+        var folder: URL?
+        var files: [URL] = []
+        var args = CommandLine.arguments.dropFirst()[...]
+        while let arg = args.popFirst() {
+            if arg.hasPrefix("--") { _ = args.popFirst(); continue }  // --flag value
             var isDir: ObjCBool = false
             let url = URL(fileURLWithPath: arg).standardizedFileURL
-            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
-                await openFolder(url)
-                return
-            }
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
+            if isDir.boolValue { folder = folder ?? url } else { files.append(url) }
         }
+        guard let folder else { return }
+        await openFolder(folder, openDefaultFile: files.isEmpty)
+        for file in files { openFile(file) }
     }
 
-    func openFolder(_ url: URL) async {
-        if isDirty { save() }
+    func openFolder(_ url: URL, openDefaultFile: Bool = true) async {
+        if !dirtyDocuments.isEmpty {
+            guard resolveUnsaved(dirtyDocuments) else { return }
+        }
+        for document in documents { sendDidClose(document) }
         await stopLanguageServer()
         rootURL = url
         fileTree = FileNode.loadTree(at: url)
-        currentFile = nil
-        text = ""
-        isDirty = false
+        documents = []
+        activeDocument = nil
         diagnostics = [:]
         output = ""
         backStack = []
-        if let main = Self.firstFile(named: "main.go", in: fileTree) ?? Self.firstGoFile(in: fileTree) {
-            openFile(main)
+        if openDefaultFile, let file = Self.defaultFile(in: fileTree) {
+            openFile(file)
         }
         await startLanguageServer(root: url)
     }
@@ -119,44 +146,123 @@ final class Workspace {
         fileTree = FileNode.loadTree(at: rootURL)
     }
 
-    // MARK: - Files
+    // MARK: - Documents
 
-    func openFile(_ url: URL) {
-        guard url != currentFile else { return }
-        if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true { return }
-        if isDirty { save() }
+    /// Opens `url` in a tab (or switches to its existing tab).
+    @discardableResult
+    func openFile(_ url: URL) -> Document? {
+        let key = Self.key(for: url)
+        if let existing = documents.first(where: { Self.key(for: $0.url) == key }) {
+            activeDocument = existing
+            return existing
+        }
+        if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true { return nil }
         guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
             appendOutput("Cannot open \(url.path) (not UTF-8 text?)\n")
-            return
+            bottomTab = .output
+            return nil
         }
-        closeCurrentDocument()
-        currentFile = url
-        text = contents
-        isDirty = false
-        caretOffset = 0
-        documentVersion = 1
-        sendDidOpen()
+        let document = Document(url: url, text: contents, isReadOnly: isOutsideProject(url))
+        let insertIndex = activeDocument.flatMap { active in documents.firstIndex { $0 === active } }
+            .map { $0 + 1 } ?? documents.count
+        documents.insert(document, at: insertIndex)
+        activeDocument = document
+        sendDidOpen(document)
+        return document
     }
 
-    func updateText(_ newText: String) {
-        guard newText != text else { return }
-        text = newText
-        isDirty = true
-        documentVersion += 1
-        guard lspReady, isGoFile, let url = currentFile else { return }
+    func activate(_ document: Document) {
+        activeDocument = document
+    }
+
+    func selectAdjacentTab(_ delta: Int) {
+        guard let active = activeDocument, let index = documents.firstIndex(where: { $0 === active }),
+              documents.count > 1 else { return }
+        activeDocument = documents[(index + delta + documents.count) % documents.count]
+    }
+
+    func closeDocument(_ document: Document) {
+        if document.isDirty, !resolveUnsaved([document]) { return }
+        remove([document])
+    }
+
+    func closeOtherDocuments(than keep: Document) {
+        let others = documents.filter { $0 !== keep }
+        let dirty = others.filter(\.isDirty)
+        if !dirty.isEmpty, !resolveUnsaved(dirty) { return }
+        remove(others)
+        activeDocument = keep
+    }
+
+    func closeAllDocuments() {
+        if !dirtyDocuments.isEmpty, !resolveUnsaved(dirtyDocuments) { return }
+        remove(documents)
+    }
+
+    private func remove(_ toClose: [Document]) {
+        for document in toClose {
+            sendDidClose(document)
+            guard let index = documents.firstIndex(where: { $0 === document }) else { continue }
+            documents.remove(at: index)
+            if activeDocument === document {
+                activeDocument = documents.isEmpty ? nil : documents[min(index, documents.count - 1)]
+            }
+        }
+    }
+
+    /// Asks what to do with unsaved documents. Returns false if the user cancelled.
+    func resolveUnsaved(_ dirty: [Document]) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = dirty.count == 1
+            ? "Do you want to save the changes you made to \(dirty[0].name)?"
+            : "You have unsaved changes in \(dirty.count) files."
+        alert.informativeText = "Your changes will be lost if you don't save them."
+        alert.addButton(withTitle: dirty.count == 1 ? "Save" : "Save All")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Don't Save")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            dirty.forEach(save)
+            return dirty.allSatisfy { !$0.isDirty }
+        case .alertThirdButtonReturn:
+            for document in dirty {
+                document.isDirty = false  // discard: the buffer is about to be closed
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    func updateText(of document: Document, to newText: String) {
+        guard newText != document.text else { return }
+        document.text = newText
+        document.isDirty = true
+        document.version += 1
+        guard lspReady, document.isGo else { return }
         try? lsp?.notify("textDocument/didChange", params: [
-            "textDocument": ["uri": .string(url.absoluteString), "version": .int(documentVersion)],
+            "textDocument": ["uri": .string(document.url.absoluteString), "version": .int(document.version)],
             "contentChanges": [["text": .string(newText)]],
         ])
     }
 
     func save() {
-        guard let url = currentFile, !isReadOnly else { return }
+        if let activeDocument { save(activeDocument) }
+    }
+
+    func saveAll() {
+        dirtyDocuments.forEach(save)
+    }
+
+    func save(_ document: Document) {
+        guard !document.isReadOnly else { return }
         do {
-            try text.write(to: url, atomically: true, encoding: .utf8)
-            isDirty = false
-            if lspReady, isGoFile {
-                try? lsp?.notify("textDocument/didSave", params: ["textDocument": ["uri": .string(url.absoluteString)]])
+            try document.text.write(to: document.url, atomically: true, encoding: .utf8)
+            document.isDirty = false
+            if lspReady, document.isGo {
+                try? lsp?.notify("textDocument/didSave", params: [
+                    "textDocument": ["uri": .string(document.url.absoluteString)],
+                ])
             }
         } catch {
             appendOutput("Save failed: \(error.localizedDescription)\n")
@@ -165,30 +271,28 @@ final class Workspace {
     }
 
     func reveal(_ problem: ProblemItem) {
-        let url = URL(fileURLWithPath: problem.path)
-        if currentFile.map(Self.key(for:)) != problem.path { openFile(url) }
-        revealTarget = RevealTarget(position: problem.diagnostic.start)
+        navigate(to: URL(fileURLWithPath: problem.path), position: problem.diagnostic.start)
     }
 
     // MARK: - Language features
 
-    func completions(at offset: Int) async -> [CompletionItem] {
-        guard case let (lsp, params)? = positionRequest(at: offset),
+    func completions(in document: Document, at offset: Int) async -> [CompletionItem] {
+        guard case let (lsp, params)? = positionRequest(document, at: offset),
               let result = try? await lsp.request("textDocument/completion", params: params)
         else { return [] }
         return CompletionItem.parseList(result)
     }
 
-    func hover(at offset: Int) async -> String? {
-        guard case let (lsp, params)? = positionRequest(at: offset),
+    func hover(in document: Document, at offset: Int) async -> String? {
+        guard case let (lsp, params)? = positionRequest(document, at: offset),
               let result = try? await lsp.request("textDocument/hover", params: params)
         else { return nil }
         return HoverContent.parse(result).map { String($0.prefix(4000)) }
     }
 
-    func jumpToDefinition(at offset: Int) async {
-        guard let url = currentFile, case let (lsp, params)? = positionRequest(at: offset) else { return }
-        let origin = LineIndex(text).position(of: offset)
+    func jumpToDefinition(from document: Document, at offset: Int) async {
+        guard case let (lsp, params)? = positionRequest(document, at: offset) else { return }
+        let origin = LineIndex(document.text).position(of: offset)
         let result = try? await lsp.request("textDocument/definition", params: params)
         guard let location = result.map(Location.parseAll)?.first,
               let target = URL(string: location.uri), target.isFileURL
@@ -196,7 +300,7 @@ final class Workspace {
             flashStatus("No definition found")
             return
         }
-        backStack.append(NavigationPoint(url: url, position: origin))
+        backStack.append(NavigationPoint(url: document.url, position: origin))
         if backStack.count > 100 { backStack.removeFirst() }
         navigate(to: URL(fileURLWithPath: target.path), position: location.start)
     }
@@ -206,16 +310,15 @@ final class Workspace {
         navigate(to: point.url, position: point.position)
     }
 
-    private func navigate(to url: URL, position: TextPosition) {
-        if currentFile.map(Self.key(for:)) != Self.key(for: url) { openFile(url) }
-        guard currentFile.map(Self.key(for:)) == Self.key(for: url) else { return }
-        revealTarget = RevealTarget(position: position)
+    func navigate(to url: URL, position: TextPosition) {
+        guard let document = openFile(url) else { return }
+        document.revealTarget = RevealTarget(position: position)
     }
 
-    private func positionRequest(at offset: Int) -> (LSPClient, JSONValue)? {
-        guard lspReady, isGoFile, let url = currentFile, let lsp else { return nil }
-        let position = LineIndex(text).position(of: offset)
-        return (lsp, ["textDocument": ["uri": .string(url.absoluteString)], "position": position.json])
+    private func positionRequest(_ document: Document, at offset: Int) -> (LSPClient, JSONValue)? {
+        guard lspReady, document.isGo, let lsp else { return nil }
+        let position = LineIndex(document.text).position(of: offset)
+        return (lsp, ["textDocument": ["uri": .string(document.url.absoluteString)], "position": position.json])
     }
 
     private func flashStatus(_ message: String) {
@@ -262,7 +365,7 @@ final class Workspace {
             try client.notify("initialized", params: [:])
             lspReady = true
             lspStatus = "gopls: ready"
-            sendDidOpen()
+            documents.forEach(sendDidOpen)
         } catch {
             if lsp === client { lsp = nil }
             lspStatus = "gopls failed: \(error.localizedDescription)"
@@ -297,21 +400,23 @@ final class Workspace {
         }
     }
 
-    private func sendDidOpen() {
-        guard lspReady, isGoFile, let url = currentFile else { return }
+    private func sendDidOpen(_ document: Document) {
+        guard lspReady, document.isGo else { return }
         try? lsp?.notify("textDocument/didOpen", params: [
             "textDocument": [
-                "uri": .string(url.absoluteString),
+                "uri": .string(document.url.absoluteString),
                 "languageId": "go",
-                "version": .int(documentVersion),
-                "text": .string(text),
+                "version": .int(document.version),
+                "text": .string(document.text),
             ],
         ])
     }
 
-    private func closeCurrentDocument() {
-        guard lspReady, isGoFile, let url = currentFile else { return }
-        try? lsp?.notify("textDocument/didClose", params: ["textDocument": ["uri": .string(url.absoluteString)]])
+    private func sendDidClose(_ document: Document) {
+        guard lspReady, document.isGo else { return }
+        try? lsp?.notify("textDocument/didClose", params: [
+            "textDocument": ["uri": .string(document.url.absoluteString)],
+        ])
     }
 
     private static func initializeParams(root: URL) -> JSONValue {
@@ -347,7 +452,7 @@ final class Workspace {
             bottomTab = .output
             return
         }
-        if isDirty { save() }
+        saveAll()
         output = "$ go \(arguments.joined(separator: " "))\n"
         bottomTab = .output
         isRunning = true
@@ -402,12 +507,14 @@ final class Workspace {
         url.resolvingSymlinksInPath().path
     }
 
-    private static func firstFile(named name: String, in nodes: [FileNode]) -> URL? {
-        if let hit = nodes.first(where: { !$0.isDirectory && $0.name == name }) { return hit.url }
-        return nil
+    /// Files outside the project (stdlib, module cache) open read-only.
+    private func isOutsideProject(_ url: URL) -> Bool {
+        guard let rootURL else { return false }
+        return !Self.key(for: url).hasPrefix(Self.key(for: rootURL) + "/")
     }
 
-    private static func firstGoFile(in nodes: [FileNode]) -> URL? {
-        nodes.first(where: { !$0.isDirectory && $0.url.pathExtension == "go" })?.url
+    private static func defaultFile(in nodes: [FileNode]) -> URL? {
+        let files = nodes.filter { !$0.isDirectory }
+        return (files.first { $0.name == "main.go" } ?? files.first { $0.url.pathExtension == "go" })?.url
     }
 }

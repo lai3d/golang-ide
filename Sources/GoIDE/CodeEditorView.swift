@@ -16,6 +16,7 @@ struct CodeEditorView: NSViewRepresentable {
     var text: String
     var highlightGo: Bool
     var isEditable: Bool
+    var isActive: Bool
     var diagnostics: [Diagnostic]
     var reveal: RevealTarget?
     var services: EditorServices
@@ -93,6 +94,18 @@ struct CodeEditorView: NSViewRepresentable {
         coordinator.parent = self
         guard let textView = coordinator.textView else { return }
         if textView.isEditable != isEditable { textView.isEditable = isEditable }
+        if coordinator.isActive != isActive {
+            scrollView.isHidden = !isActive
+            if isActive {
+                if let window = textView.window {
+                    window.makeFirstResponder(textView)
+                    coordinator.isActive = true
+                }  // else: retry on the next update, once in a window
+            } else {
+                coordinator.dismissPopups()
+                coordinator.isActive = false
+            }
+        }
 
         if textView.string != text {
             // A different file was opened (typing never gets here: text already matches).
@@ -132,6 +145,7 @@ struct CodeEditorView: NSViewRepresentable {
         var appliedDiagnostics: [Diagnostic] = []
         var appliedHighlightGo = false
         var lastRevealID: UUID?
+        var isActive: Bool?
 
         private let completionPopup = CompletionPopup()
         private var completionItems: [CompletionItem] = []
