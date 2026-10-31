@@ -62,9 +62,19 @@ Released so far: [v0.1.0](https://github.com/lai3d/golang-ide/releases/tag/v0.1.
 | 5.7 | ✅ Multiple windows | One project per window (File ▸ New Window, ⇧⌘N) | 0.8h |
 | 5.8 | ✅ Code folding | `textDocument/foldingRange`; gutter chevrons, `{⋯}` placeholders, ⌥⌘← / ⌥⌘→, fold/unfold all (⇧⌥⌘← / →) | 1h |
 
+## Phase 6 — Everyday workflow
+
+| # | Item | Notes | Est. |
+|---|---|---|---|
+| 6.1 | ⬜ Session restore | Recent projects on the welcome screen; reopen the last project's tabs | 0.4h |
+| 6.2 | ⬜ Replace in project | Replace field in the search sidebar: preview, replace one / all (undoable in open files) | 0.5h |
+| 6.3 | ⬜ Diff vs HEAD | Side-by-side diff of the current file against HEAD | 0.6h |
+| 6.4 | ⬜ Source control panel | Changed files, stage / unstage / discard, commit message + commit | 0.8h |
+| 6.5 | ⬜ Debugger extras | Conditional breakpoints, hover to evaluate while paused, watch expressions | 0.7h |
+| 6.6 | ⬜ Integrated terminal | Shell in a bottom-panel tab (PTY), opened in the project folder | 0.8h |
+| 6.7 | ⬜ Go module tools | `go mod tidy`, `go get -u ./...`, `go generate ./...`, `go vet ./...` from the Go menu | 0.3h |
+
 ## Later / ideas
 
 - tree-sitter-go for incremental parsing (if semantic tokens + the regex lexer fall short)
-- Git commit / diff UI
-- Find & replace across the project
 - Developer ID signing + notarization in the release workflow (needs the user's Apple Developer account)
