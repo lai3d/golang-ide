@@ -209,3 +209,31 @@ import GoIDECore
         #expect(workspace.referenceResults.map { ($0.path as NSString).lastPathComponent } == ["greet.go", "main.go"])
     }
 }
+
+@MainActor
+@Suite struct WorkspaceRenameTests {
+    @Test(.enabled(if: GoIDECore.ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
+    func renamesAcrossOpenAndClosedFiles() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-ws-rename-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.canonicalFileURL
+        try "module example.com/r\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
+        try "package main\n\nfunc main() { greet() }\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+        let greetFile = dir.appendingPathComponent("greet.go")
+        try "package main\n\nfunc greet() {}\n".write(to: greetFile, atomically: true, encoding: .utf8)
+
+        let workspace = Workspace()
+        await workspace.openFolder(dir)
+        let main = try #require(workspace.activeDocument)
+        let offset = ("package main\n\nfunc main() { " as NSString).length + 2
+
+        #expect(await workspace.prepareRename(in: main, at: offset) == "greet")
+        #expect(await workspace.prepareRename(in: main, at: 2) == nil)  // "package" keyword
+
+        let error = await workspace.renameSymbol(in: main, at: offset, to: "salute")
+        #expect(error == nil)
+        #expect(main.text == "package main\n\nfunc main() { salute() }\n" && main.isDirty)  // open: buffer
+        #expect(try String(contentsOf: greetFile, encoding: .utf8) == "package main\n\nfunc salute() {}\n")  // closed: disk
+    }
+}

@@ -84,6 +84,14 @@ struct GoIDEApp: App {
                 Button("Previous Tab") { workspace.selectAdjacentTab(-1) }
                     .keyboardShortcut("[", modifiers: [.command, .shift])
             }
+            CommandMenu("Refactor") {
+                Button("Rename Symbol…") {
+                    guard let document = workspace.activeDocument else { return }
+                    Task { await workspace.promptRename(in: document, at: document.caretOffset) }
+                }
+                .keyboardShortcut("e", modifiers: [.control, .command])
+                .disabled(!workspace.isGoFile)
+            }
             CommandMenu("Go") {
                 Button("Run") { workspace.runGo(["run", "."]) }
                     .keyboardShortcut("r")

@@ -567,6 +567,88 @@ final class Workspace {
         bottomTab = .references
     }
 
+    // MARK: - Rename & workspace edits
+
+    /// The current name if the symbol at `offset` can be renamed, else nil.
+    func prepareRename(in document: Document, at offset: Int) async -> String? {
+        guard case let (lsp, params)? = positionRequest(document, at: offset),
+              let result = try? await lsp.request("textDocument/prepareRename", params: params),
+              !result.isNull
+        else { return nil }
+        if let placeholder = result["placeholder"]?.stringValue { return placeholder }
+        // A bare Range (or {range}): read the name from the buffer.
+        let range = result["range"] ?? result
+        guard let start = TextPosition(json: range["start"]), let end = TextPosition(json: range["end"]) else { return nil }
+        return (document.text as NSString).substring(with: LineIndex(document.text).range(from: start, to: end))
+    }
+
+    /// Renames the symbol at `offset` across the workspace. Returns an error message, or nil.
+    @discardableResult
+    func renameSymbol(in document: Document, at offset: Int, to newName: String) async -> String? {
+        guard case let (lsp, .object(params))? = positionRequest(document, at: offset) else {
+            return "gopls is not ready"
+        }
+        var request = params
+        request["newName"] = .string(newName)
+        let versions = Dictionary(documents.map { ($0.id, $0.version) }, uniquingKeysWith: { $1 })
+        let result: JSONValue
+        do {
+            result = try await lsp.request("textDocument/rename", params: .object(request))
+        } catch {
+            return error.localizedDescription
+        }
+        // Edits are relative to what gopls saw; bail out if a buffer changed meanwhile.
+        guard documents.allSatisfy({ versions[$0.id] == nil || versions[$0.id] == $0.version }) else {
+            return "The file changed while renaming; try again."
+        }
+        let changed = apply(WorkspaceEdit.parse(result))
+        flashStatus("Renamed to ‘\(newName)’ in \(changed) file\(changed == 1 ? "" : "s")")
+        return nil
+    }
+
+    /// Asks for a new name, then renames (⌃⌘E / context menu).
+    func promptRename(in document: Document, at offset: Int) async {
+        guard let current = await prepareRename(in: document, at: offset) else {
+            flashStatus("Nothing to rename here")
+            return
+        }
+        guard let newName = Prompt.text(title: "Rename ‘\(current)’", message: "All references are updated.",
+                                        initial: current, confirm: "Rename"),
+              newName != current else { return }
+        if let error = await renameSymbol(in: document, at: offset, to: newName) {
+            let alert = NSAlert()
+            alert.messageText = "Couldn't rename ‘\(current)’"
+            alert.informativeText = error
+            alert.runModal()
+        }
+    }
+
+    /// Applies a WorkspaceEdit: open documents change in their buffers (undoable, unsaved);
+    /// other files are rewritten on disk. Returns the number of files changed.
+    @discardableResult
+    func apply(_ edit: WorkspaceEdit) -> Int {
+        var changed = 0
+        var written: [String] = []
+        for (uri, edits) in edit.changes where !edits.isEmpty {
+            guard let url = URL(string: uri), url.isFileURL else { continue }
+            let key = Self.key(for: url)
+            if let document = documents.first(where: { Self.key(for: $0.url) == key }) {
+                replaceText(of: document, with: TextEdit.apply(edits, to: document.text))
+                changed += 1
+            } else if let disk = try? String(contentsOf: url, encoding: .utf8) {
+                do {
+                    try TextEdit.apply(edits, to: disk).write(to: url, atomically: true, encoding: .utf8)
+                    written.append(url.path)
+                    changed += 1
+                } catch {
+                    appendOutput("Couldn't update \(url.path): \(error.localizedDescription)\n")
+                }
+            }
+        }
+        notifyWatchedFiles(written)  // don't wait for FSEvents
+        return changed
+    }
+
     func jumpToDefinition(from document: Document, at offset: Int) async {
         guard case let (lsp, params)? = positionRequest(document, at: offset) else { return }
         let origin = LineIndex(document.text).position(of: offset)
@@ -768,6 +850,7 @@ final class Workspace {
                 "activeParameterSupport": true,
             ]],
             "definition": ["linkSupport": false],
+            "rename": ["prepareSupport": true],
             "formatting": ["dynamicRegistration": false],
             "codeAction": [
                 "isPreferredSupport": true,

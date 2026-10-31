@@ -9,6 +9,7 @@ struct EditorServices {
     var signatureHelp: @MainActor (Int) async -> SignatureHelp?
     var definition: @MainActor (Int) -> Void
     var references: @MainActor (Int) -> Void
+    var rename: @MainActor (Int) -> Void
     var caretMoved: @MainActor (Int) -> Void
 }
 
@@ -513,6 +514,7 @@ struct CodeEditorView: NSViewRepresentable {
             return [
                 ActionMenuItem(title: "Jump to Definition") { [weak self] in self?.parent.services.definition(offset) },
                 ActionMenuItem(title: "Find References") { [weak self] in self?.parent.services.references(offset) },
+                ActionMenuItem(title: "Rename Symbol…") { [weak self] in self?.parent.services.rename(offset) },
             ]
         }
 
