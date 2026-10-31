@@ -21,6 +21,7 @@ enum SessionStore {
         paths.removeAll { $0 == folder.path }
         paths.insert(folder.path, at: 0)
         defaults.set(Array(paths.prefix(maxRecents)), forKey: recentsKey)
+        ToolboxRecents.record(folder)
     }
 
     static func clearRecents() {
