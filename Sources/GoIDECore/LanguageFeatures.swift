@@ -322,3 +322,41 @@ public struct InlayHint: Sendable, Hashable {
     /// gopls settings that turn the hints on (sent as initializationOptions).
     public static var goplsSettings: JSONValue { GoplsSettings.default }
 }
+
+// MARK: - Folding
+
+/// A foldable region (`textDocument/foldingRange`).
+public struct FoldRegion: Sendable, Hashable {
+    public let startLine: Int
+    public let startCharacter: Int?
+    public let endLine: Int
+    public let endCharacter: Int?
+    public let kind: String?
+
+    public init(startLine: Int, startCharacter: Int? = nil, endLine: Int, endCharacter: Int? = nil, kind: String? = nil) {
+        self.startLine = startLine
+        self.startCharacter = startCharacter
+        self.endLine = endLine
+        self.endCharacter = endCharacter
+        self.kind = kind
+    }
+
+    public static func parseAll(_ result: JSONValue) -> [FoldRegion] {
+        (result.arrayValue ?? []).compactMap { value in
+            guard let start = value["startLine"]?.intValue, let end = value["endLine"]?.intValue, end > start else { return nil }
+            return FoldRegion(startLine: start, startCharacter: value["startCharacter"]?.intValue,
+                              endLine: end, endCharacter: value["endCharacter"]?.intValue,
+                              kind: value["kind"]?.stringValue)
+        }
+    }
+
+    /// The UTF-16 range to hide when folded: from the end of the first line's text (or
+    /// `startCharacter`) to `endCharacter` (or the end of the last line). E.g. `{⋯}`.
+    public func hiddenRange(in index: LineIndex) -> NSRange? {
+        let lineEnd = { (line: Int) in index.offset(of: TextPosition(line: line, character: .max)) }
+        let start = startCharacter.map { index.offset(of: TextPosition(line: startLine, character: $0)) } ?? lineEnd(startLine)
+        let end = endCharacter.map { index.offset(of: TextPosition(line: endLine, character: $0)) } ?? lineEnd(endLine)
+        guard end > start else { return nil }
+        return NSRange(location: start, length: end - start)
+    }
+}

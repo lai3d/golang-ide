@@ -6,6 +6,16 @@ enum BottomTab: Hashable {
     case problems, references, calls, tests, debug, output
 }
 
+enum FoldAction: Hashable {
+    case fold, unfold, foldAll, unfoldAll
+}
+
+/// A request for the active editor to fold/unfold (from the menu).
+struct FoldRequest: Equatable {
+    let id = UUID()
+    let action: FoldAction
+}
+
 enum CallDirection: Hashable {
     case incoming, outgoing
 }
@@ -165,6 +175,11 @@ final class Workspace {
 
     /// Bumped to ask the active editor to show its quick-fix menu (⌥↩).
     private(set) var quickFixRequest = 0
+    private(set) var foldRequest: FoldRequest?
+
+    func requestFold(_ action: FoldAction) {
+        foldRequest = FoldRequest(action: action)
+    }
 
     // Open Quickly
     var isQuickOpenVisible = false
@@ -708,6 +723,15 @@ final class Workspace {
               ])
         else { return [] }
         return legend.decode(result)
+    }
+
+    func foldingRanges(in document: Document) async -> [FoldRegion] {
+        guard lspReady, document.isGo, let lsp,
+              let result = try? await lsp.request("textDocument/foldingRange", params: [
+                  "textDocument": ["uri": .string(document.url.absoluteString)],
+              ])
+        else { return [] }
+        return FoldRegion.parseAll(result)
     }
 
     /// Inlay hints for the whole document.
@@ -1266,6 +1290,7 @@ final class Workspace {
             "documentHighlight": ["dynamicRegistration": false],
             "callHierarchy": ["dynamicRegistration": false],
             "inlayHint": ["dynamicRegistration": false],
+            "foldingRange": ["lineFoldingOnly": false],
             "semanticTokens": [
                 "requests": ["full": true, "range": false],
                 "formats": ["relative"],

@@ -35,7 +35,7 @@ public struct LineIndex: Sendable {
         guard position.line < lineStarts.count else { return utf16Count }
         let start = lineStarts[position.line]
         let end = position.line + 1 < lineStarts.count ? lineStarts[position.line + 1] - 1 : utf16Count
-        return min(start + max(position.character, 0), end)
+        return start + min(max(position.character, 0), end - start)  // clamp before adding (no overflow)
     }
 
     public func position(of offset: Int) -> TextPosition {

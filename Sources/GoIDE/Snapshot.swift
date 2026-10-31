@@ -128,6 +128,11 @@ enum Snapshot {
                     print("after close: \(remaining.map(\.title)) workspaces: \(Workspace.allOpen.compactMap { $0.rootURL?.lastPathComponent })")
                 }
             }
+            if let action = value("--snapshot-fold"), let workspace {
+                let actions: [String: FoldAction] = ["fold": .fold, "all": .foldAll, "unfold": .unfold]
+                if let action = actions[action] { workspace.requestFold(action) }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()
                 try? await Task.sleep(for: .milliseconds(300))

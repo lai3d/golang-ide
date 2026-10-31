@@ -279,6 +279,7 @@ struct DocumentEditor: View {
             diagnostics: workspace.diagnostics(for: document),
             reveal: document.revealTarget,
             quickFixRequest: workspace.quickFixRequest,
+            foldRequest: workspace.foldRequest,
             services: EditorServices(
                 completions: { await workspace.completions(in: document, at: $0) },
                 hover: { await workspace.hover(in: document, at: $0) },
@@ -287,6 +288,7 @@ struct DocumentEditor: View {
                 inlayHints: { await workspace.inlayHints(in: document) },
                 semanticTokens: { await workspace.semanticTokens(in: document) },
                 blame: { await workspace.blame(in: document, line: $0) },
+                foldingRanges: { await workspace.foldingRanges(in: document) },
                 definition: { offset in Task { await workspace.jumpToDefinition(from: document, at: offset) } },
                 references: { offset in Task { await workspace.findReferences(in: document, at: offset) } },
                 callHierarchy: { offset in Task { await workspace.showCallHierarchy(in: document, at: offset) } },

@@ -10,7 +10,9 @@ A native macOS IDE for Go, written in Swift (SwiftUI + AppKit).
 
 **Editor**
 - Tabs with independent buffers, undo and scroll; unsaved-changes prompts
-- Go syntax highlighting, line-number gutter with error/warning markers, current-line highlight, auto-indent
+- Go syntax highlighting refined by gopls semantic tokens; inlay hints for parameter names and inferred types
+- Line-number gutter with error/warning markers, Git change bars and code folding (⌥⌘← / ⌥⌘→)
+- Occurrence highlights for the symbol under the caret; current-line highlight, auto-indent
 - Format on save (gofmt + organize imports via gopls), Format Document (⌥⇧F)
 
 **Project**
@@ -18,11 +20,13 @@ A native macOS IDE for Go, written in Swift (SwiftUI + AppKit).
 - Open files reload when changed externally (or offer Reload / Keep Mine if you have edits)
 - Find in project (⇧⌘F): match case, whole word, regex
 - Open Quickly (⌘P / ⇧⌘O): fuzzy file finder + workspace symbols; Outline sidebar for the current file
+- Git: status badges in the sidebar, branch in the title bar, inline blame for the caret line
+- Multiple windows, one project each (⇧⌘N)
 
 **Language (gopls)**
 - Live diagnostics: underlines, gutter dots, Problems panel
 - Completion with auto-imports, hover docs, signature help while typing calls
-- Jump to definition (⌘-click / ⌃⌘J) and back (⌃⌘←), find references (⇧⌘R)
+- Jump to definition (⌘-click / ⌃⌘J) and back (⌃⌘←), find references (⇧⌘R), call hierarchy (⌃⌥H)
 - Rename symbol across files (⌃⌘E), quick fixes and refactorings (⌥↩)
 
 **Run, test & debug**

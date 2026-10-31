@@ -11,6 +11,7 @@ struct EditorServices {
     var inlayHints: @MainActor () async -> [InlayHint]
     var semanticTokens: @MainActor () async -> [SemanticToken]
     var blame: @MainActor (Int) async -> BlameLine?
+    var foldingRanges: @MainActor () async -> [FoldRegion]
     var definition: @MainActor (Int) -> Void
     var references: @MainActor (Int) -> Void
     var callHierarchy: @MainActor (Int) -> Void
@@ -42,6 +43,7 @@ struct CodeEditorView: NSViewRepresentable {
     var diagnostics: [Diagnostic]
     var reveal: RevealTarget?
     var quickFixRequest = 0
+    var foldRequest: FoldRequest?
     var services: EditorServices
     var onChange: (String) -> Void
 
@@ -100,6 +102,9 @@ struct CodeEditorView: NSViewRepresentable {
         let ruler = LineNumberRulerView(textView: textView)
         ruler.onRunTest = { [weak coordinator] name in coordinator?.parent.services.runTest(name) }
         ruler.onToggleBreakpoint = { [weak coordinator] line in coordinator?.parent.services.toggleBreakpoint(line) }
+        ruler.onToggleFold = { [weak coordinator] line in coordinator?.toggleFold(line: line) }
+        textView.layoutManager?.delegate = coordinator.foldingDelegate
+        textView.onPlaceholderClick = { [weak coordinator] offset in coordinator?.unfold(at: offset) }
         let container = EditorContainerView(scrollView: scrollView, gutter: ruler)
 
         coordinator.textView = textView
@@ -160,6 +165,11 @@ struct CodeEditorView: NSViewRepresentable {
         }
         if textView.executionLine != executionLine { textView.executionLine = executionLine }
 
+        if let foldRequest, foldRequest.id != coordinator.lastFoldRequestID {
+            coordinator.lastFoldRequestID = foldRequest.id
+            if isActive { coordinator.perform(foldRequest.action) }
+        }
+
         if quickFixRequest != coordinator.lastQuickFixRequest {
             coordinator.lastQuickFixRequest = quickFixRequest
             if isActive { coordinator.showQuickFixes() }
@@ -184,6 +194,7 @@ struct CodeEditorView: NSViewRepresentable {
         var appliedHighlightGo = false
         var lastRevealID: UUID?
         var lastQuickFixRequest = 0
+        var lastFoldRequestID: UUID?
         var isActive: Bool?
 
         private let completionPopup = CompletionPopup()
@@ -258,6 +269,10 @@ struct CodeEditorView: NSViewRepresentable {
             guard let textView else { return }
             parent.services.caretMoved(textView.selectedRange().location)
             ruler?.needsDisplay = true
+            let caret = textView.selectedRange().location
+            if let fold = folded.first(where: { caret > $0.location && caret < NSMaxRange($0) }) {
+                setFolded(folded.filter { $0 != fold })  // the caret went inside: open it
+            }
             if signaturePopup.isVisible { scheduleSignatureHelp(after: .milliseconds(80)) }
             scheduleOccurrences()
             scheduleBlame()
@@ -295,6 +310,88 @@ struct CodeEditorView: NSViewRepresentable {
             if blame.isUncommitted { return "You · Uncommitted changes" }
             let when = relativeFormatter.localizedString(for: blame.date, relativeTo: Date())
             return "\(blame.author), \(when) · \(blame.summary)"
+        }
+
+        // MARK: Folding
+
+        /// Foldable regions from gopls: the line they start on and the range folding hides.
+        private var foldRegions: [(line: Int, range: NSRange)] = []
+        /// Currently folded (hidden) ranges, sorted. Mirrored into `foldingDelegate` for layout.
+        private(set) var folded: [NSRange] = [] {
+            didSet { foldingDelegate.folded = folded }
+        }
+        let foldingDelegate = FoldingLayoutDelegate()
+
+        func isHidden(_ index: Int) -> Bool {
+            folded.contains { NSLocationInRange(index, $0) }
+        }
+
+        private func line(of offset: Int) -> Int {
+            LineIndex(textView?.string ?? "").position(of: offset).line
+        }
+
+        func toggleFold(line: Int) {
+            if let open = folded.first(where: { self.line(of: $0.location) == line }) {
+                setFolded(folded.filter { $0 != open })
+            } else if let region = foldRegions.filter({ $0.line == line }).max(by: { $0.range.length < $1.range.length }) {
+                setFolded(folded + [region.range])
+            }
+        }
+
+        func unfold(at offset: Int) {
+            setFolded(folded.filter { $0.location != offset })
+        }
+
+        func perform(_ action: FoldAction) {
+            guard let textView else { return }
+            let caret = textView.selectedRange().location
+            let caretLine = line(of: caret)
+            switch action {
+            case .fold:
+                // The innermost region around the caret (or starting on its line).
+                let candidates = foldRegions.filter {
+                    !folded.contains($0.range) && ($0.line == caretLine || NSLocationInRange(caret, $0.range))
+                }
+                if let region = candidates.min(by: { $0.range.length < $1.range.length }) {
+                    setFolded(folded + [region.range])
+                }
+            case .unfold:
+                setFolded(folded.filter { !(NSLocationInRange(caret, $0) || line(of: $0.location) == caretLine) })
+            case .foldAll:
+                setFolded(foldRegions.map(\.range))
+            case .unfoldAll:
+                setFolded([])
+            }
+            // Keep the caret visible: out of any hidden range.
+            if let fold = folded.first(where: { NSLocationInRange(caret, $0) }) {
+                textView.setSelectedRange(NSRange(location: fold.location, length: 0))
+            }
+        }
+
+        private func setFolded(_ ranges: [NSRange]) {
+            // Drop folds nested inside other folds' hidden text only for display; keep them all.
+            folded = Array(Set(ranges.map { NSValue(range: $0) })).map(\.rangeValue).sorted { $0.location < $1.location }
+            invalidateFolding()
+            applyStyling()
+        }
+
+        private func invalidateFolding() {
+            guard let textView, let layoutManager = textView.layoutManager else { return }
+            let full = NSRange(location: 0, length: (textView.string as NSString).length)
+            layoutManager.invalidateGlyphs(forCharacterRange: full, changeInLength: 0, actualCharacterRange: nil)
+            layoutManager.invalidateLayout(forCharacterRange: full, actualCharacterRange: nil)
+            textView.needsDisplay = true
+            ruler?.needsDisplay = true
+        }
+
+        private func updateFoldMarkers() {
+            guard let ruler else { return }
+            var markers: [Int: Bool] = [:]
+            for region in foldRegions where markers[region.line] == nil {
+                markers[region.line] = false
+            }
+            for fold in folded { markers[line(of: fold.location)] = true }
+            ruler.foldMarkers = markers
         }
 
         // MARK: Git change bars
@@ -360,7 +457,8 @@ struct CodeEditorView: NSViewRepresentable {
                 let text = textView.string
                 async let hints = self.parent.showInlayHints ? self.parent.services.inlayHints() : []
                 async let tokens = self.parent.services.semanticTokens()
-                let (newHints, newTokens) = await (hints, tokens)
+                async let regions = self.parent.services.foldingRanges()
+                let (newHints, newTokens, newRegions) = await (hints, tokens, regions)
                 guard !Task.isCancelled, textView.string == text else { return }  // edited meanwhile
                 let index = LineIndex(text)
                 self.placedHints = newHints.map {
@@ -368,6 +466,9 @@ struct CodeEditorView: NSViewRepresentable {
                                paddingLeft: $0.paddingLeft, paddingRight: $0.paddingRight)
                 }
                 let ns = text as NSString
+                self.foldRegions = newRegions.compactMap { region in
+                    region.hiddenRange(in: index).map { (line: region.startLine, range: $0) }
+                }
                 self.semanticRuns = newTokens.compactMap { token in
                     guard let color = EditorTheme.color(forSemantic: token.type, modifiers: token.modifiers) else { return nil }
                     let start = index.offset(of: TextPosition(line: token.line, character: token.start))
@@ -394,6 +495,23 @@ struct CodeEditorView: NSViewRepresentable {
                 }
                 return hint
             }
+            let foldCount = folded.count
+            folded = folded.compactMap { range in
+                var range = range
+                if range.location >= end {
+                    range.location += edit.delta
+                } else if NSMaxRange(range) > edit.range.location {
+                    return nil  // edited inside a fold: unfold it
+                }
+                return range
+            }
+            if folded.count != foldCount { invalidateFolding() }
+            foldRegions = foldRegions.compactMap { region in
+                var region = region
+                if region.range.location >= end { region.range.location += edit.delta }
+                else if NSMaxRange(region.range) > edit.range.location { return nil }
+                return region
+            }
             semanticRuns = semanticRuns.compactMap { run in
                 var run = run
                 if run.range.location >= end {
@@ -408,15 +526,28 @@ struct CodeEditorView: NSViewRepresentable {
         /// Opens a gap (kerning on the preceding character) for each hint and hands the
         /// labels to the text view, which draws them in the gaps. Text and undo are untouched.
         private func applyInlayHints(to storage: NSTextStorage, in textView: CodeTextView) {
-            guard parent.highlightGo, parent.showInlayHints, !placedHints.isEmpty else {
-                textView.inlayItems = []
-                return
-            }
             let ns = storage.string as NSString
             let font = NSFont.monospacedSystemFont(ofSize: max(9, parent.settings.fontSize - 2), weight: .regular)
             var items: [CodeTextView.InlayItem] = []
             var used = Set<Int>()
-            for hint in placedHints where hint.offset > 0 && hint.offset <= ns.length && !used.contains(hint.offset) {
+            // Fold placeholders first: "{⋯}"
+            for fold in folded where fold.location > 0 && NSMaxRange(fold) <= ns.length {
+                used.insert(fold.location)
+                let label = NSAttributedString(string: "⋯", attributes: [
+                    .font: NSFont.systemFont(ofSize: max(9, parent.settings.fontSize - 1), weight: .bold),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ])
+                let width = ceil(label.size().width) + 14
+                storage.addAttribute(.kern, value: width, range: NSRange(location: fold.location - 1, length: 1))
+                items.append(CodeTextView.InlayItem(offset: fold.location, label: label, width: width,
+                                                    padLeft: 2, padRight: 2, isFold: true))
+            }
+            guard parent.highlightGo, parent.showInlayHints, !placedHints.isEmpty else {
+                textView.inlayItems = items
+                return
+            }
+            for hint in placedHints where hint.offset > 0 && hint.offset <= ns.length && !used.contains(hint.offset)
+                && !isHidden(hint.offset - 1) {
                 guard ns.character(at: hint.offset - 1) != 0x0A else { continue }  // no gap at a line start
                 used.insert(hint.offset)
                 let label = NSAttributedString(string: hint.label, attributes: [
@@ -917,6 +1048,7 @@ struct CodeEditorView: NSViewRepresentable {
             }
             ruler?.diagnosticMarkers = markers
             updateTestMarkers(force: true)
+            updateFoldMarkers()
 
             appliedDiagnostics = parent.diagnostics
             appliedHighlightGo = parent.highlightGo
@@ -938,7 +1070,10 @@ final class CodeTextView: NSTextView {
         let width: CGFloat
         let padLeft: CGFloat
         let padRight: CGFloat
+        var isFold = false
     }
+
+    var onPlaceholderClick: ((Int) -> Void)?
 
     /// Inlay hint labels, drawn into the kerning gaps the coordinator opened before `offset`.
     var inlayItems: [InlayItem] = [] {
@@ -973,31 +1108,39 @@ final class CodeTextView: NSTextView {
     }
 
     private func drawInlayHints(in dirtyRect: NSRect) {
-        guard !inlayItems.isEmpty, let layoutManager, let textContainer else { return }
-        let length = (string as NSString).length
-        let origin = textContainerOrigin
-        for item in inlayItems where item.offset > 0 && item.offset <= length {
-            let previous = layoutManager.glyphIndexForCharacter(at: item.offset - 1)
-            var lineRect = layoutManager.lineFragmentRect(forGlyphAt: previous, effectiveRange: nil)
-            lineRect.origin.y += origin.y
-            guard lineRect.intersects(dirtyRect) else { continue }
-            // The gap ends where the next glyph starts.
-            let gapEnd: CGFloat
-            if item.offset < length {
-                let next = layoutManager.glyphIndexForCharacter(at: item.offset)
-                gapEnd = layoutManager.lineFragmentRect(forGlyphAt: next, effectiveRange: nil).minX
-                    + layoutManager.location(forGlyphAt: next).x + origin.x
-            } else {
-                gapEnd = layoutManager.boundingRect(forGlyphRange: NSRange(location: previous, length: 1), in: textContainer).maxX
-                    + origin.x
-            }
-            let pill = NSRect(x: gapEnd - item.width + item.padLeft, y: lineRect.minY + 2,
-                              width: item.width - item.padLeft - item.padRight, height: lineRect.height - 4)
-            NSColor.quaternaryLabelColor.withAlphaComponent(0.12).setFill()
+        for item in inlayItems {
+            guard let pill = pillRect(for: item), pill.insetBy(dx: 0, dy: -4).intersects(dirtyRect) else { continue }
+            let fill = item.isFold ? NSColor.controlAccentColor.withAlphaComponent(0.18)
+                                   : NSColor.quaternaryLabelColor.withAlphaComponent(0.12)
+            fill.setFill()
             NSBezierPath(roundedRect: pill, xRadius: 4, yRadius: 4).fill()
             let size = item.label.size()
-            item.label.draw(at: NSPoint(x: pill.minX + 4, y: pill.midY - size.height / 2))
+            let x = item.isFold ? pill.midX - size.width / 2 : pill.minX + 4
+            item.label.draw(at: NSPoint(x: x, y: pill.midY - size.height / 2))
         }
+    }
+
+    /// Where an inlay label (or fold placeholder) sits: the kerning gap before `offset`.
+    func pillRect(for item: InlayItem) -> NSRect? {
+        guard let layoutManager, let textContainer else { return nil }
+        let length = (string as NSString).length
+        guard item.offset > 0, item.offset <= length else { return nil }
+        let origin = textContainerOrigin
+        let previous = layoutManager.glyphIndexForCharacter(at: item.offset - 1)
+        var lineRect = layoutManager.lineFragmentRect(forGlyphAt: previous, effectiveRange: nil)
+        lineRect.origin.y += origin.y
+        // The gap ends where the next glyph starts.
+        let gapEnd: CGFloat
+        if item.offset < length {
+            let next = layoutManager.glyphIndexForCharacter(at: item.offset)
+            gapEnd = layoutManager.lineFragmentRect(forGlyphAt: next, effectiveRange: nil).minX
+                + layoutManager.location(forGlyphAt: next).x + origin.x
+        } else {
+            gapEnd = layoutManager.boundingRect(forGlyphRange: NSRange(location: previous, length: 1), in: textContainer).maxX
+                + origin.x
+        }
+        return NSRect(x: gapEnd - item.width + item.padLeft, y: lineRect.minY + 2,
+                      width: item.width - item.padLeft - item.padRight, height: lineRect.height - 4)
     }
 
     /// Zero-based line where the debugger is paused (highlighted).
@@ -1088,6 +1231,11 @@ final class CodeTextView: NSTextView {
 
     override func mouseDown(with event: NSEvent) {
         onMouseDown?()
+        let point = convert(event.locationInWindow, from: nil)
+        if let fold = inlayItems.first(where: { $0.isFold && (pillRect(for: $0)?.insetBy(dx: -2, dy: -2).contains(point) ?? false) }) {
+            onPlaceholderClick?(fold.offset)
+            return
+        }
         if event.modifierFlags.contains(.command), let index = characterIndex(atWindowPoint: event.locationInWindow) {
             setSelectedRange(NSRange(location: index, length: 0))
             onCommandClick?(index)
@@ -1149,5 +1297,49 @@ final class EditorContainerView: NSView {
         gutter.frame = NSRect(x: 0, y: 0, width: width, height: bounds.height)
         scrollView.frame = NSRect(x: width, y: 0, width: max(0, bounds.width - width), height: bounds.height)
         gutter.needsDisplay = true
+    }
+}
+
+/// Hides folded text during layout: null glyphs, and newlines that don't break lines.
+/// Not actor-bound (TextKit calls it synchronously); folded ranges are guarded by a lock.
+final class FoldingLayoutDelegate: NSObject, NSLayoutManagerDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _folded: [NSRange] = []
+
+    var folded: [NSRange] {
+        get { lock.withLock { _folded } }
+        set { lock.withLock { _folded = newValue } }
+    }
+
+    private func isHidden(_ index: Int, in ranges: [NSRange]) -> Bool {
+        ranges.contains { NSLocationInRange(index, $0) }
+    }
+
+    func layoutManager(
+        _ layoutManager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
+        properties: UnsafePointer<NSLayoutManager.GlyphProperty>, characterIndexes: UnsafePointer<Int>,
+        font: NSFont, forGlyphRange glyphRange: NSRange
+    ) -> Int {
+        let ranges = folded
+        guard !ranges.isEmpty else { return 0 }
+        var modified = Array(UnsafeBufferPointer(start: properties, count: glyphRange.length))
+        var changed = false
+        for i in 0..<glyphRange.length where isHidden(characterIndexes[i], in: ranges) {
+            modified[i] = .null
+            changed = true
+        }
+        guard changed else { return 0 }
+        modified.withUnsafeBufferPointer { buffer in
+            layoutManager.setGlyphs(glyphs, properties: buffer.baseAddress!, characterIndexes: characterIndexes,
+                                    font: font, forGlyphRange: glyphRange)
+        }
+        return glyphRange.length
+    }
+
+    func layoutManager(
+        _ layoutManager: NSLayoutManager, shouldUse action: NSLayoutManager.ControlCharacterAction,
+        forControlCharacterAt charIndex: Int
+    ) -> NSLayoutManager.ControlCharacterAction {
+        isHidden(charIndex, in: folded) ? .zeroAdvancement : action
     }
 }

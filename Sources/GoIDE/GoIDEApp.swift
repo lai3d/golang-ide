@@ -141,6 +141,19 @@ struct GoIDECommands: Commands {
                     .keyboardShortcut(.leftArrow, modifiers: [.control, .command])
                     .disabled(!workspace.canGoBack)
                 Divider()
+                Button("Fold") { workspace.requestFold(.fold) }
+                    .keyboardShortcut(.leftArrow, modifiers: [.option, .command])
+                    .disabled(!workspace.isGoFile)
+                Button("Unfold") { workspace.requestFold(.unfold) }
+                    .keyboardShortcut(.rightArrow, modifiers: [.option, .command])
+                    .disabled(!workspace.isGoFile)
+                Button("Fold All") { workspace.requestFold(.foldAll) }
+                    .keyboardShortcut(.leftArrow, modifiers: [.shift, .option, .command])
+                    .disabled(!workspace.isGoFile)
+                Button("Unfold All") { workspace.requestFold(.unfoldAll) }
+                    .keyboardShortcut(.rightArrow, modifiers: [.shift, .option, .command])
+                    .disabled(!workspace.isGoFile)
+                Divider()
                 Button("Next Tab") { workspace.selectAdjacentTab(1) }
                     .keyboardShortcut("]", modifiers: [.command, .shift])
                 Button("Previous Tab") { workspace.selectAdjacentTab(-1) }

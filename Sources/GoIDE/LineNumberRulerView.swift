@@ -24,6 +24,12 @@ final class LineNumberRulerView: NSView {
     }
     var onRunTest: ((String) -> Void)?
     var onToggleBreakpoint: ((Int) -> Void)?
+    var onToggleFold: ((Int) -> Void)?
+
+    /// Foldable lines → whether they're folded (chevrons in the right column).
+    var foldMarkers: [Int: Bool] = [:] {
+        didSet { if foldMarkers != oldValue { needsDisplay = true } }
+    }
 
     /// Zero-based lines with breakpoints.
     var breakpoints: Set<Int> = [] {
@@ -66,7 +72,7 @@ final class LineNumberRulerView: NSView {
         lineIndex = LineIndex(textView?.string ?? "")
         let digits = max(3, String(lineIndex.lineCount).count)
         let digitWidth = ("8" as NSString).size(withAttributes: [.font: font]).width
-        let thickness = ceil(CGFloat(digits) * digitWidth + 30)
+        let thickness = ceil(CGFloat(digits) * digitWidth + 44)  // + fold column
         ruleThickness = thickness
         needsDisplay = true
     }
@@ -77,6 +83,8 @@ final class LineNumberRulerView: NSView {
         guard let line = line(at: point) else { return super.mouseDown(with: event) }
         if let test = testMarkers[line], point.x < 17 {
             onRunTest?(test.name)
+        } else if foldMarkers[line] != nil, point.x > bounds.maxX - 18 {
+            onToggleFold?(line)
         } else {
             onToggleBreakpoint?(line)
         }
@@ -102,12 +110,16 @@ final class LineNumberRulerView: NSView {
         let caretLine = lineIndex.position(of: textView.selectedRange().location).line
         let originY = textView.textContainerOrigin.y
 
+        var lastY: CGFloat = -.greatestFiniteMagnitude
         func draw(line: Int, fragment: NSRect) {
             let y = convert(NSPoint(x: 0, y: fragment.minY + originY), from: textView).y
+            // Lines folded away share the fold line's fragment: draw only its first line.
+            guard y > lastY + 0.5 else { return }
+            lastY = y
             let isCaretLine = line == caretLine
             if breakpoints.contains(line) {
                 // Xcode-style tag behind the line number.
-                let tag = NSRect(x: 17, y: y + 1, width: bounds.width - 20, height: fragment.height - 2)
+                let tag = NSRect(x: 17, y: y + 1, width: bounds.width - 32, height: fragment.height - 2)
                 let path = NSBezierPath()
                 path.move(to: NSPoint(x: tag.minX + 3, y: tag.minY))
                 path.line(to: NSPoint(x: tag.maxX - 6, y: tag.minY))
@@ -152,8 +164,17 @@ final class LineNumberRulerView: NSView {
             }
             let label = "\(line + 1)" as NSString
             let size = label.size(withAttributes: attributes)
-            label.draw(at: NSPoint(x: bounds.maxX - 8 - size.width, y: y + (fragment.height - size.height) / 2),
+            label.draw(at: NSPoint(x: bounds.maxX - 20 - size.width, y: y + (fragment.height - size.height) / 2),
                        withAttributes: attributes)
+            if let isFolded = foldMarkers[line] {
+                let config = NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold)
+                    .applying(.init(paletteColors: [isFolded ? .controlAccentColor : .tertiaryLabelColor]))
+                if let chevron = NSImage(systemSymbolName: isFolded ? "chevron.right" : "chevron.down",
+                                         accessibilityDescription: isFolded ? "Unfold" : "Fold")?.withSymbolConfiguration(config) {
+                    let s = chevron.size
+                    chevron.draw(in: NSRect(x: bounds.maxX - 14, y: y + (fragment.height - s.height) / 2, width: s.width, height: s.height))
+                }
+            }
             if line == executionLine {
                 // the arrow above owns the marker column
             } else if let test = testMarkers[line] {
