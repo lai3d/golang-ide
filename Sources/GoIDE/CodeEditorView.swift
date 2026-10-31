@@ -31,7 +31,9 @@ struct CodeEditorView: NSViewRepresentable {
         scrollView.borderType = .noBorder
 
         let big = CGFloat.greatestFiniteMagnitude
-        let textView = CodeTextView(frame: NSRect(origin: .zero, size: scrollView.contentSize))
+        // TextKit 1: stable line-fragment APIs for the gutter and current-line highlight.
+        let textView = CodeTextView(usingTextLayoutManager: false)
+        textView.frame = NSRect(origin: .zero, size: scrollView.contentSize)
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: big, height: big)
         textView.isVerticallyResizable = true
@@ -72,8 +74,16 @@ struct CodeEditorView: NSViewRepresentable {
             coordinator, selector: #selector(Coordinator.didScroll(_:)),
             name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
 
+        let ruler = LineNumberRulerView(textView: textView, scrollView: scrollView)
+        scrollView.verticalRulerView = ruler
+        scrollView.hasVerticalRuler = true
+        scrollView.rulersVisible = true
+
         coordinator.textView = textView
+        coordinator.ruler = ruler
         textView.string = text
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        ruler.textDidChange()
         coordinator.applyStyling()
         return scrollView
     }
@@ -91,6 +101,7 @@ struct CodeEditorView: NSViewRepresentable {
             textView.undoManager?.removeAllActions()
             textView.setSelectedRange(NSRange(location: 0, length: 0))
             textView.scrollToBeginningOfDocument(nil)
+            coordinator.ruler?.textDidChange()
             coordinator.applyStyling()
         } else if coordinator.appliedDiagnostics != diagnostics || coordinator.appliedHighlightGo != highlightGo {
             coordinator.applyStyling()
@@ -117,6 +128,7 @@ struct CodeEditorView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: CodeEditorView
         weak var textView: CodeTextView?
+        weak var ruler: LineNumberRulerView?
         var appliedDiagnostics: [Diagnostic] = []
         var appliedHighlightGo = false
         var lastRevealID: UUID?
@@ -147,6 +159,7 @@ struct CodeEditorView: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView else { return }
             parent.onChange(textView.string)
+            ruler?.textDidChange()
             applyStyling()
             endHover()
 
@@ -175,6 +188,7 @@ struct CodeEditorView: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView else { return }
             parent.services.caretMoved(textView.selectedRange().location)
+            ruler?.needsDisplay = true
         }
 
         // MARK: Keys
@@ -392,6 +406,14 @@ struct CodeEditorView: NSViewRepresentable {
             }
             storage.endEditing()
 
+            var markers: [Int: Diagnostic.Severity] = [:]
+            for diagnostic in parent.diagnostics {
+                let line = diagnostic.start.line
+                if let existing = markers[line], existing.rawValue <= diagnostic.severity.rawValue { continue }
+                markers[line] = diagnostic.severity
+            }
+            ruler?.diagnosticMarkers = markers
+
             appliedDiagnostics = parent.diagnostics
             appliedHighlightGo = parent.highlightGo
         }
@@ -414,6 +436,32 @@ final class CodeTextView: NSTextView {
                                   owner: self, userInfo: nil)
         addTrackingArea(area)
         hoverArea = area
+    }
+
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        needsDisplay = true  // move the current-line highlight
+    }
+
+    /// Subtle highlight behind the caret's line.
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard selectedRange().length == 0, let layoutManager, let textContainer else { return }
+        let text = string as NSString
+        let location = selectedRange().location
+        var lineRect: NSRect
+        if text.length == 0 || (location >= text.length && text.hasSuffix("\n")) {
+            guard layoutManager.extraLineFragmentTextContainer === textContainer else { return }
+            lineRect = layoutManager.extraLineFragmentRect
+        } else {
+            let glyph = layoutManager.glyphIndexForCharacter(at: min(location, text.length - 1))
+            lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        }
+        lineRect.origin.x = 0
+        lineRect.origin.y += textContainerOrigin.y
+        lineRect.size.width = bounds.width
+        NSColor.controlAccentColor.withAlphaComponent(0.07).setFill()
+        lineRect.intersection(rect).fill()
     }
 
     override func mouseMoved(with event: NSEvent) {
