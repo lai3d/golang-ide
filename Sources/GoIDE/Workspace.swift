@@ -6,6 +6,16 @@ enum BottomTab: Hashable {
     case problems, references, calls, tests, debug, output, terminal
 }
 
+enum EditAction: Hashable {
+    case toggleComment, indent, outdent, duplicateLines, moveLinesUp, moveLinesDown
+}
+
+/// A request for the active editor to run a line-editing command (from the menu).
+struct EditRequest: Equatable {
+    let id = UUID()
+    let action: EditAction
+}
+
 enum FoldAction: Hashable {
     case fold, unfold, foldAll, unfoldAll
 }
@@ -181,6 +191,11 @@ final class Workspace {
     /// Bumped to ask the active editor to show its quick-fix menu (⌥↩).
     private(set) var quickFixRequest = 0
     private(set) var foldRequest: FoldRequest?
+    private(set) var editRequest: EditRequest?
+
+    func requestEdit(_ action: EditAction) {
+        editRequest = EditRequest(action: action)
+    }
 
     func requestFold(_ action: FoldAction) {
         foldRequest = FoldRequest(action: action)

@@ -319,6 +319,7 @@ struct DocumentEditor: View {
             reveal: document.revealTarget,
             quickFixRequest: workspace.quickFixRequest,
             foldRequest: workspace.foldRequest,
+            editRequest: workspace.editRequest,
             services: EditorServices(
                 completions: { await workspace.completions(in: document, at: $0) },
                 hover: { await workspace.hover(in: document, at: $0) },

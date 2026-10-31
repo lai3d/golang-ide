@@ -128,6 +128,22 @@ struct GoIDECommands: Commands {
                 Button("Find in Project…") { workspace.showSearch() }
                     .keyboardShortcut("f", modifiers: [.command, .shift])
             }
+            CommandMenu("Editor") {
+                Button("Toggle Comment") { workspace.requestEdit(.toggleComment) }
+                    .keyboardShortcut("/", modifiers: .command)
+                Divider()
+                Button("Shift Right") { workspace.requestEdit(.indent) }
+                    .keyboardShortcut("]", modifiers: .command)
+                Button("Shift Left") { workspace.requestEdit(.outdent) }
+                    .keyboardShortcut("[", modifiers: .command)
+                Divider()
+                Button("Move Line Up") { workspace.requestEdit(.moveLinesUp) }
+                    .keyboardShortcut("[", modifiers: [.option, .command])
+                Button("Move Line Down") { workspace.requestEdit(.moveLinesDown) }
+                    .keyboardShortcut("]", modifiers: [.option, .command])
+                Button("Duplicate Line") { workspace.requestEdit(.duplicateLines) }
+                    .keyboardShortcut("d", modifiers: [.shift, .command])
+            }
             CommandMenu("Navigate") {
                 Button("Open Quickly…") { workspace.showQuickOpen() }
                     .keyboardShortcut("o", modifiers: [.command, .shift])

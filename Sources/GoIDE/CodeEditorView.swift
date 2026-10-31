@@ -48,6 +48,7 @@ struct CodeEditorView: NSViewRepresentable {
     var reveal: RevealTarget?
     var quickFixRequest = 0
     var foldRequest: FoldRequest?
+    var editRequest: EditRequest?
     var services: EditorServices
     var onChange: (String) -> Void
 
@@ -171,6 +172,11 @@ struct CodeEditorView: NSViewRepresentable {
         }
         if textView.executionLine != executionLine { textView.executionLine = executionLine }
 
+        if let editRequest, editRequest.id != coordinator.lastEditRequestID {
+            coordinator.lastEditRequestID = editRequest.id
+            if isActive { coordinator.perform(editRequest.action) }
+        }
+
         if let foldRequest, foldRequest.id != coordinator.lastFoldRequestID {
             coordinator.lastFoldRequestID = foldRequest.id
             if isActive { coordinator.perform(foldRequest.action) }
@@ -201,6 +207,7 @@ struct CodeEditorView: NSViewRepresentable {
         var lastRevealID: UUID?
         var lastQuickFixRequest = 0
         var lastFoldRequestID: UUID?
+        var lastEditRequestID: UUID?
         var isActive: Bool?
 
         private let completionPopup = CompletionPopup()
@@ -226,6 +233,9 @@ struct CodeEditorView: NSViewRepresentable {
         // MARK: Text changes
 
         func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
+            if !isApplyingCommand, let handled = handleAutoPair(textView, range: range, replacement: replacementString) {
+                return handled
+            }
             lastReplacement = replacementString
             pendingEdit = (range, (replacementString?.utf16.count ?? 0) - range.length)
             return true
@@ -244,7 +254,16 @@ struct CodeEditorView: NSViewRepresentable {
 
             let typed = lastReplacement
             lastReplacement = nil
-            guard parent.highlightGo, !isApplyingCompletion, !isApplyingExternalChange else { return }
+            if let closer = pendingCloser {  // auto-close: insert the closer after the caret
+                pendingCloser = nil
+                let caret = textView.selectedRange().location
+                isApplyingCommand = true
+                textView.insertText(closer, replacementRange: NSRange(location: caret, length: 0))
+                isApplyingCommand = false
+                textView.setSelectedRange(NSRange(location: caret, length: 0))
+                autoPairs.append(AutoPair(open: caret - 1, close: caret))
+            }
+            guard parent.highlightGo, !isApplyingCompletion, !isApplyingExternalChange, !isApplyingCommand else { return }
 
             // Parameter hints: open on "(" / ",", follow edits while open.
             if typed == "(" || typed == "," {
@@ -275,7 +294,9 @@ struct CodeEditorView: NSViewRepresentable {
             guard let textView else { return }
             parent.services.caretMoved(textView.selectedRange().location)
             ruler?.needsDisplay = true
+            // Leaving a pair (caret outside opener…closer) forgets it.
             let caret = textView.selectedRange().location
+            autoPairs.removeAll { caret <= $0.open || caret > $0.close }
             if let fold = folded.first(where: { caret > $0.location && caret < NSMaxRange($0) }) {
                 setFolded(folded.filter { $0 != fold })  // the caret went inside: open it
             }
@@ -679,7 +700,102 @@ struct CodeEditorView: NSViewRepresentable {
             let indent = String(before.prefix { $0 == "\t" || $0 == " " })
             let trimmed = before.trimmingCharacters(in: .whitespaces)
             let extra = (trimmed.hasSuffix("{") || trimmed.hasSuffix("(")) ? "\t" : ""
+            let next: unichar? = selection.location < ns.length ? ns.character(at: selection.location) : nil
+            if !extra.isEmpty, selection.length == 0, next == 0x7D || next == 0x29 {
+                // Between a pair, e.g. {|}: open a block with the closer on its own line.
+                textView.insertText("\n" + indent + extra + "\n" + indent, replacementRange: selection)
+                textView.setSelectedRange(NSRange(location: selection.location + 1 + (indent + extra as NSString).length, length: 0))
+                return
+            }
             textView.insertText("\n" + indent + extra, replacementRange: selection)
+        }
+
+        // MARK: Auto-closing pairs and line commands
+
+        private var pendingCloser: String?
+        /// Pairs we inserted (opener and closer offsets), innermost last. Typing a closer where
+        /// ours sits steps over it; backspace on an empty pair deletes both.
+        private struct AutoPair { var open: Int; var close: Int }
+        private var autoPairs: [AutoPair] = []
+        private var isApplyingCommand = false
+
+        /// Returns false to swallow the change (handled here), nil to let it through.
+        private func handleAutoPair(_ textView: NSTextView, range: NSRange, replacement: String?) -> Bool? {
+            guard parent.highlightGo, let replacement else { return nil }
+            let ns = textView.string as NSString
+            if replacement.count == 1, let character = replacement.first, range.length == 0 {
+                // Typing a closer exactly where ours sits: step over it.
+                if let index = autoPairs.lastIndex(where: { $0.close == range.location }), range.location < ns.length,
+                   ns.substring(with: NSRange(location: range.location, length: 1)) == replacement {
+                    autoPairs.remove(at: index)
+                    hideCompletions()  // a closer ends whatever was being completed
+                    textView.setSelectedRange(NSRange(location: range.location + 1, length: 0))
+                    return false
+                }
+                // Electric "}": on a whitespace-only line, outdent one level first.
+                if character == "}" {
+                    let lineStart = ns.lineRange(for: NSRange(location: range.location, length: 0)).location
+                    let before = ns.substring(with: NSRange(location: lineStart, length: range.location - lineStart))
+                    if !before.isEmpty, before.allSatisfy({ $0 == "\t" || $0 == " " }) {
+                        let outdented = before.hasSuffix("\t") ? String(before.dropLast())
+                                                                : String(before.dropLast(min(4, before.count)))
+                        let whole = NSRange(location: lineStart, length: range.location - lineStart)
+                        isApplyingCommand = true
+                        textView.insertText(outdented + "}", replacementRange: whole)
+                        isApplyingCommand = false
+                        shiftAutoPairs(for: whole, inserted: (outdented as NSString).length + 1)
+                        return false
+                    }
+                }
+                if let closer = TextEditing.pairs[character], TextEditing.shouldAutoClose(character, in: ns, at: range.location) {
+                    pendingCloser = String(closer)
+                }
+            } else if replacement.isEmpty, range.length == 1,
+                      let index = autoPairs.lastIndex(where: { $0.open == range.location && $0.close == range.location + 1 }) {
+                // Backspace on an empty pair we inserted: delete both.
+                autoPairs.remove(at: index)
+                isApplyingCommand = true
+                textView.insertText("", replacementRange: NSRange(location: range.location, length: 2))
+                isApplyingCommand = false
+                shiftAutoPairs(for: NSRange(location: range.location, length: 2), inserted: 0)
+                return false
+            }
+            shiftAutoPairs(for: range, inserted: replacement.utf16.count)
+            return nil
+        }
+
+        /// Keeps tracked pairs aligned with an edit; drops pairs whose characters it touches.
+        private func shiftAutoPairs(for range: NSRange, inserted: Int) {
+            let delta = inserted - range.length
+            autoPairs = autoPairs.compactMap { pair in
+                var pair = pair
+                if NSLocationInRange(pair.open, range) || NSLocationInRange(pair.close, range) { return nil }
+                if range.location <= pair.open { pair.open += delta }
+                if range.location <= pair.close { pair.close += delta }
+                return pair
+            }
+        }
+
+        /// Runs a line command as one undoable edit.
+        func perform(_ action: EditAction) {
+            guard let textView, textView.isEditable else { return }
+            let text = textView.string, selection = textView.selectedRange()
+            let change: TextChange? = switch action {
+            case .toggleComment: TextEditing.toggleComment(in: text, selection: selection)
+            case .indent: TextEditing.shiftLines(in: text, selection: selection, outdent: false)
+            case .outdent: TextEditing.shiftLines(in: text, selection: selection, outdent: true)
+            case .duplicateLines: TextEditing.duplicateLines(in: text, selection: selection)
+            case .moveLinesUp: TextEditing.moveLines(in: text, selection: selection, up: true)
+            case .moveLinesDown: TextEditing.moveLines(in: text, selection: selection, up: false)
+            }
+            guard let change else { return }
+            dismissPopups()
+            autoPairs = []
+            isApplyingCommand = true
+            textView.insertText(change.replacement, replacementRange: change.range)
+            isApplyingCommand = false
+            textView.setSelectedRange(change.selection)
+            textView.scrollRangeToVisible(change.selection)
         }
 
         // MARK: Completion
@@ -691,7 +807,8 @@ struct CodeEditorView: NSViewRepresentable {
                 guard !Task.isCancelled, let self, let textView = self.textView else { return }
                 let offset = textView.selectedRange().location
                 let items = await self.parent.services.completions(offset)
-                guard !Task.isCancelled else { return }
+                // Stale if the caret moved meanwhile (typing re-requests; other moves mean "done").
+                guard !Task.isCancelled, textView.selectedRange().location == offset else { return }
                 self.completionItems = items
                 self.refilterCompletions()
             }

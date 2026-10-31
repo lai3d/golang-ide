@@ -56,7 +56,11 @@ enum Snapshot {
                let textView = NSApp.windows.first?.firstResponder as? NSTextView {
                 // Type like a user would (exercises completion / signature triggers).
                 for character in text {
-                    textView.insertText(String(character), replacementRange: textView.selectedRange())
+                    if character == "\n" {  // like pressing Return: goes through the editor's command handling
+                        textView.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+                    } else {
+                        textView.insertText(String(character), replacementRange: textView.selectedRange())
+                    }
                     try? await Task.sleep(for: .milliseconds(40))
                 }
                 try? await Task.sleep(for: .milliseconds(1500))
@@ -169,6 +173,15 @@ enum Snapshot {
                 try? await Task.sleep(for: .seconds(2))  // shell startup
                 workspace.terminal?.send(input + "\n")
                 try? await Task.sleep(for: .seconds(2))
+            }
+            if let actions = value("--snapshot-edit"), let workspace {
+                let map: [String: EditAction] = ["comment": .toggleComment, "indent": .indent, "outdent": .outdent,
+                                                 "dup": .duplicateLines, "up": .moveLinesUp, "down": .moveLinesDown]
+                for action in actions.split(separator: ",").compactMap({ map[String($0)] }) {
+                    workspace.requestEdit(action)
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                try? await Task.sleep(for: .milliseconds(300))
             }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()
