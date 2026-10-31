@@ -190,6 +190,20 @@ enum Snapshot {
                 print(text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()
                     .map { "\($0.offset + 1): \($0.element.debugDescription)" }.joined(separator: "\n"))
             }
+            if args.contains("--snapshot-runconfigs"), let workspace {
+                if let index = workspace.runConfigurations.firstIndex(where: { $0.name == "server" }) {
+                    workspace.runConfigurations[index].arguments = "-port 8080 --name \"demo app\""
+                    workspace.runConfigurations[index].environment = "LOG_LEVEL=debug"
+                    workspace.selectedRunConfigurationID = workspace.runConfigurations[index].id
+                }
+                if args.contains("--snapshot-run") {
+                    workspace.runSelectedConfiguration()
+                    for _ in 0..<100 where workspace.isRunning { try? await Task.sleep(for: .milliseconds(100)) }
+                    print("run output:\n" + workspace.output)
+                }
+                workspace.isEditingRunConfigurations = true
+                try? await Task.sleep(for: .milliseconds(800))
+            }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()
                 try? await Task.sleep(for: .milliseconds(300))
@@ -261,7 +275,7 @@ enum Snapshot {
                 context.restoreGState()
             }
         }
-        for child in window.childWindows ?? [] where child.isVisible {
+        for child in (window.childWindows ?? []) + [window.attachedSheet].compactMap({ $0 }) where child.isVisible {
             guard let view = child.contentView,
                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
             view.cacheDisplay(in: view.bounds, to: rep)

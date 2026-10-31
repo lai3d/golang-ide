@@ -85,7 +85,7 @@ Released so far: [v0.2.0](https://github.com/lai3d/golang-ide/releases/tag/v0.2.
 | 7.3 | ✅ Implementations | Jump to Implementation (⌥⌘J), Jump to Type Definition (⌃⌥⌘J), context menu; several results list in References | 0.3h |
 | 7.4 | ✅ Breadcrumbs | Path › type › function above the editor, following the caret | 0.4h |
 | 7.5 | ✅ Test coverage | Go ▸ Test with Coverage (⌃⇧⌘U): covered / uncovered lines tinted, total and per-file % in the Tests panel | 0.7h |
-| 7.6 | ⬜ Run configurations | Pick the main package (`cmd/…`), program arguments and environment for Run and Debug | 0.6h |
+| 7.6 | ✅ Run configurations | Toolbar picker + Edit Configurations sheet: main package (auto-detected `cmd/…`), arguments, environment; used by Run and Debug | 0.6h |
 
 ## Later / ideas
 

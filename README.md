@@ -13,6 +13,9 @@ A native macOS IDE for Go, written in Swift (SwiftUI + AppKit).
 - Go syntax highlighting refined by gopls semantic tokens; inlay hints for parameter names and inferred types
 - Line-number gutter with error/warning markers, Git change bars and code folding (⌥⌘← / ⌥⌘→)
 - Occurrence highlights for the symbol under the caret; current-line highlight, auto-indent
+- Auto-closing brackets and quotes, toggle comment (⌘/), move / duplicate lines, indent / outdent
+- Snippets: gopls call placeholders and built-ins (`iferr`, `fori`, `forr`, `tt`, …) with Tab stops
+- Breadcrumbs (folder › file › type › function) above the editor
 - Format on save (gofmt + organize imports via gopls), Format Document (⌥⇧F)
 
 **Project**
@@ -27,11 +30,12 @@ A native macOS IDE for Go, written in Swift (SwiftUI + AppKit).
 **Language (gopls)**
 - Live diagnostics: underlines, gutter dots, Problems panel
 - Completion with auto-imports, hover docs, signature help while typing calls
-- Jump to definition (⌘-click / ⌃⌘J) and back (⌃⌘←), find references (⇧⌘R), call hierarchy (⌃⌥H)
+- Jump to definition (⌘-click / ⌃⌘J), implementation (⌥⌘J), type definition (⌃⌥⌘J) and back (⌃⌘←); find references (⇧⌘R), call hierarchy (⌃⌥H)
 - Rename symbol across files (⌃⌘E), quick fixes and refactorings (⌥↩)
 
 **Run, test & debug**
-- `go build ./...` (⌘B), `go run .` (⌘R), stop (⌘.) with an Output panel
+- Run configurations (main package, arguments, environment) for Run (⌘R) and Debug; `go build ./...` (⌘B), stop (⌘.)
+- Test coverage (⌃⇧⌘U): covered / uncovered lines tinted, per-file percentages
 - Tests via `go test -json` (⌘U all, ⌃⌘U package, ⌃⌥⌘U at cursor): Tests panel, gutter ▶ / ✓ / ✗
 - Debugger (Delve DAP, ⌥⌘R): click line numbers for breakpoints, continue / step over (F6) / into (F7) / out (F8), call stack, expandable variables; debug a single test
 

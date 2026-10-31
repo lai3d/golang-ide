@@ -260,6 +260,20 @@ final class Workspace {
         bottomTab = .terminal
     }
 
+    // Run configurations
+    var runConfigurations: [RunConfiguration] = [] {
+        didSet { saveRunConfigurations() }
+    }
+    var selectedRunConfigurationID: UUID? {
+        didSet { saveRunConfigurations() }
+    }
+    private(set) var mainPackages: [String] = []
+    var isEditingRunConfigurations = false
+
+    var selectedRunConfiguration: RunConfiguration? {
+        runConfigurations.first { $0.id == selectedRunConfigurationID } ?? runConfigurations.first
+    }
+
     // Call hierarchy
     private(set) var callRoot: CallNode?
     var callDirection: CallDirection = .incoming
@@ -355,11 +369,49 @@ final class Workspace {
         backStack = []
         searchResults = []
         SessionStore.noteOpened(url)
+        loadRunConfigurations()
         if openDefaultFile {
             restoreSession(in: url)
         }
         refreshGit()
         await startLanguageServer(root: url)
+    }
+
+    // MARK: - Run configurations
+
+    @ObservationIgnored private var loadingRunConfigurations = false
+
+    /// Saved configurations for this folder, or one per main package found.
+    func loadRunConfigurations() {
+        guard let rootURL else { return }
+        mainPackages = GoPackages.mainPackages(under: rootURL)
+        loadingRunConfigurations = true
+        defer { loadingRunConfigurations = false }
+        if let saved = SessionStore.runConfigurations(for: rootURL), !saved.configs.isEmpty {
+            runConfigurations = saved.configs
+            selectedRunConfigurationID = saved.selected ?? saved.configs.first?.id
+        } else {
+            runConfigurations = mainPackages.map {
+                RunConfiguration(name: $0 == "." ? rootURL.lastPathComponent : ($0 as NSString).lastPathComponent, package: $0)
+            }
+            selectedRunConfigurationID = runConfigurations.first?.id
+        }
+    }
+
+    func refreshMainPackages() {
+        guard let rootURL else { return }
+        mainPackages = GoPackages.mainPackages(under: rootURL)
+    }
+
+    private func saveRunConfigurations() {
+        guard !loadingRunConfigurations, let rootURL, self !== Self.placeholder else { return }
+        SessionStore.saveRunConfigurations(runConfigurations, selected: selectedRunConfigurationID, for: rootURL)
+    }
+
+    /// ⌘R: `go run <package> <args>` with the configuration's environment.
+    func runSelectedConfiguration() {
+        guard let config = selectedRunConfiguration else { return runGo(["run", "."]) }
+        runGo(["run", config.packagePattern] + config.argumentList, environment: config.environmentVariables)
     }
 
     // MARK: - Session
@@ -1807,6 +1859,8 @@ final class Workspace {
         if let document = activeDocument, document.name.hasSuffix("_test.go"),
            let name = GoTestFinder.enclosingTest(in: document.text, at: document.caretOffset) {
             debug(test: name, in: document.url.deletingLastPathComponent())
+        } else if let config = selectedRunConfiguration {
+            debug(configuration: config)
         } else if let document = activeDocument, document.isGo, !document.name.hasSuffix("_test.go") {
             debug(package: document.url.deletingLastPathComponent())
         } else {
@@ -1818,6 +1872,17 @@ final class Workspace {
         launchDebugger(title: packagePattern(for: dir), directory: dir, launch: [
             "request": "launch", "mode": "debug", "program": .string(Self.key(for: dir)),
             "cwd": .string(Self.key(for: dir)), "outputMode": "remote",
+        ])
+    }
+
+    func debug(configuration config: RunConfiguration) {
+        guard let rootURL else { return }
+        let dir = Self.key(for: rootURL.appendingPathComponent(config.package == "." ? "" : config.package))
+        launchDebugger(title: config.name, directory: URL(fileURLWithPath: dir), launch: [
+            "request": "launch", "mode": "debug", "program": .string(dir),
+            "cwd": .string(Self.key(for: rootURL)), "outputMode": "remote",
+            "args": .array(config.argumentList.map(JSONValue.string)),
+            "env": .object(config.environmentVariables.mapValues(JSONValue.string)),
         ])
     }
 
@@ -1870,7 +1935,7 @@ final class Workspace {
 
     // MARK: - go run / build / test
 
-    func runGo(_ arguments: [String]) {
+    func runGo(_ arguments: [String], environment extra: [String: String] = [:]) {
         guard let rootURL, !isRunning else { return }
         guard let go = ToolLocator.find("go") else {
             output = "go not found. Install Go from https://go.dev/dl/\n"
@@ -1878,7 +1943,10 @@ final class Workspace {
             return
         }
         saveAll()
-        output = "$ go \(arguments.joined(separator: " "))\n"
+        let envNote = extra.isEmpty ? "" : extra.keys.sorted().map { "\($0)=… " }.joined()
+        // Echo the command shell-style (quote words with spaces) so it reads as it ran.
+        let shown = arguments.map { $0.contains(" ") || $0.isEmpty ? "\"\($0)\"" : $0 }.joined(separator: " ")
+        output = "$ \(envNote)go \(shown)\n"
         bottomTab = .output
         isRunning = true
 
@@ -1886,7 +1954,7 @@ final class Workspace {
         process.executableURL = go
         process.arguments = arguments
         process.currentDirectoryURL = rootURL
-        process.environment = ToolLocator.environment()
+        process.environment = ToolLocator.environment().merging(extra) { $1 }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe

@@ -252,8 +252,10 @@ struct GoIDECommands: Commands {
                 .disabled(workspace.activeDocument.map { workspace.gitBase(for: $0) == nil } ?? true)
             }
             CommandMenu("Go") {
-                Button("Run") { workspace.runGo(["run", "."]) }
+                Button("Run") { workspace.runSelectedConfiguration() }
                     .keyboardShortcut("r")
+                Button("Edit Run Configurations…") { workspace.isEditingRunConfigurations = true }
+                    .disabled(workspace.rootURL == nil)
                 Button("Build") { workspace.runGo(["build", "./..."]) }
                     .keyboardShortcut("b")
                 Button("Test All") { workspace.runTests(.all) }

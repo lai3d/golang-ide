@@ -1,4 +1,5 @@
 import Foundation
+import GoIDECore
 
 /// Recent projects and per-project open tabs, in UserDefaults.
 @MainActor
@@ -40,6 +41,19 @@ enum SessionStore {
     static func save(_ session: Session, for folder: URL) {
         guard let data = try? JSONEncoder().encode(session) else { return }
         defaults.set(data, forKey: "session:" + folder.path)
+    }
+
+    static func runConfigurations(for folder: URL) -> (configs: [RunConfiguration], selected: UUID?)? {
+        guard let data = defaults.data(forKey: "runConfigs:" + folder.path),
+              let configs = try? JSONDecoder().decode([RunConfiguration].self, from: data) else { return nil }
+        let selected = defaults.string(forKey: "runConfigSelected:" + folder.path).flatMap(UUID.init(uuidString:))
+        return (configs, selected)
+    }
+
+    static func saveRunConfigurations(_ configs: [RunConfiguration], selected: UUID?, for folder: URL) {
+        guard let data = try? JSONEncoder().encode(configs) else { return }
+        defaults.set(data, forKey: "runConfigs:" + folder.path)
+        defaults.set(selected?.uuidString, forKey: "runConfigSelected:" + folder.path)
     }
 
     static var reopenLastProject: Bool {

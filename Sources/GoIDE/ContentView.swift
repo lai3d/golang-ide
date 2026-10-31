@@ -37,10 +37,11 @@ struct ContentView: View {
                     Label("Test", systemImage: "checkmark.diamond")
                 }
                 .help("go test ./... (⌘U)")
-                Button { workspace.runGo(["run", "."]) } label: {
+                RunConfigurationPicker()
+                Button { workspace.runSelectedConfiguration() } label: {
                     Label("Run", systemImage: "play.fill")
                 }
-                .help("go run . (⌘R)")
+                .help("Run the selected configuration (⌘R)")
                 Button { workspace.startDebugging() } label: {
                     Label("Debug", systemImage: "ladybug")
                 }
@@ -54,6 +55,10 @@ struct ContentView: View {
             }
         }
         .task { await workspace.handleLaunchArguments() }
+        .sheet(isPresented: Binding(get: { workspace.isEditingRunConfigurations },
+                                    set: { workspace.isEditingRunConfigurations = $0 })) {
+            RunConfigurationsSheet().environment(workspace)
+        }
     }
 }
 
