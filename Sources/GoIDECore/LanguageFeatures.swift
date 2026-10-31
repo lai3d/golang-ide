@@ -260,3 +260,28 @@ public enum GoIdentifier {
         return NSRange(location: start, length: end - start)
     }
 }
+
+// MARK: - Document highlights
+
+/// Another occurrence of the symbol under the caret (`textDocument/documentHighlight`).
+public struct DocumentHighlight: Sendable, Hashable {
+    public enum Kind: Int, Sendable { case text = 1, read, write }
+    public let start: TextPosition
+    public let end: TextPosition
+    public let kind: Kind
+
+    public init(start: TextPosition, end: TextPosition, kind: Kind) {
+        self.start = start
+        self.end = end
+        self.kind = kind
+    }
+
+    public static func parseAll(_ result: JSONValue) -> [DocumentHighlight] {
+        (result.arrayValue ?? []).compactMap { value in
+            guard let start = TextPosition(json: value["range"]?["start"]),
+                  let end = TextPosition(json: value["range"]?["end"]) else { return nil }
+            return DocumentHighlight(start: start, end: end,
+                                     kind: Kind(rawValue: value["kind"]?.intValue ?? 1) ?? .text)
+        }
+    }
+}

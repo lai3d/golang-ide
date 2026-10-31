@@ -7,6 +7,7 @@ struct EditorServices {
     var completions: @MainActor (Int) async -> [CompletionItem]
     var hover: @MainActor (Int) async -> String?
     var signatureHelp: @MainActor (Int) async -> SignatureHelp?
+    var highlights: @MainActor (Int) async -> [DocumentHighlight]
     var definition: @MainActor (Int) -> Void
     var references: @MainActor (Int) -> Void
     var rename: @MainActor (Int) -> Void
@@ -197,6 +198,7 @@ struct CodeEditorView: NSViewRepresentable {
             ruler?.textDidChange()
             applyStyling()
             endHover()
+            clearOccurrences()  // stale after an edit; the selection change re-requests
 
             let typed = lastReplacement
             lastReplacement = nil
@@ -232,6 +234,59 @@ struct CodeEditorView: NSViewRepresentable {
             parent.services.caretMoved(textView.selectedRange().location)
             ruler?.needsDisplay = true
             if signaturePopup.isVisible { scheduleSignatureHelp(after: .milliseconds(80)) }
+            scheduleOccurrences()
+        }
+
+        // MARK: Occurrence highlights
+
+        private var occurrenceTask: Task<Void, Never>?
+        private var occurrenceRanges: [NSRange] = []
+
+        /// Highlights other uses of the symbol at the caret, after a short pause.
+        private func scheduleOccurrences() {
+            occurrenceTask?.cancel()
+            guard let textView, parent.highlightGo, textView.selectedRange().length == 0 else {
+                clearOccurrences()
+                return
+            }
+            let offset = textView.selectedRange().location
+            let ns = textView.string as NSString
+            // Only when the caret touches an identifier (either side of it).
+            guard GoIdentifier.wordRange(in: ns, at: offset) != nil || GoIdentifier.wordRange(in: ns, at: offset - 1) != nil else {
+                clearOccurrences()
+                return
+            }
+            occurrenceTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled, let self else { return }
+                let highlights = await self.parent.services.highlights(offset)
+                guard !Task.isCancelled, let textView = self.textView, textView.selectedRange().location == offset else { return }
+                self.showOccurrences(highlights, in: textView)
+            }
+        }
+
+        private func showOccurrences(_ highlights: [DocumentHighlight], in textView: NSTextView) {
+            clearOccurrences()
+            guard highlights.count > 1, let layoutManager = textView.layoutManager else { return }
+            let index = LineIndex(textView.string)
+            let length = (textView.string as NSString).length
+            for highlight in highlights {
+                let range = index.range(from: highlight.start, to: highlight.end)
+                guard NSMaxRange(range) <= length, range.length > 0 else { continue }
+                let color: NSColor = highlight.kind == .write
+                    ? .systemOrange.withAlphaComponent(0.28)
+                    : .systemBlue.withAlphaComponent(0.16)
+                // Temporary attributes: drawn by the layout manager, not part of the text or undo.
+                layoutManager.addTemporaryAttribute(.backgroundColor, value: color, forCharacterRange: range)
+                occurrenceRanges.append(range)
+            }
+        }
+
+        private func clearOccurrences() {
+            guard let layoutManager = textView?.layoutManager, !occurrenceRanges.isEmpty else { return }
+            let length = (textView?.string as NSString?)?.length ?? 0
+            layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: NSRange(location: 0, length: length))
+            occurrenceRanges = []
         }
 
         // MARK: Keys

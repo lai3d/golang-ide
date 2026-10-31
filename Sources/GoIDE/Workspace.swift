@@ -584,6 +584,13 @@ final class Workspace {
         return HoverContent.parse(result).map { String($0.prefix(4000)) }
     }
 
+    func documentHighlights(in document: Document, at offset: Int) async -> [DocumentHighlight] {
+        guard case let (lsp, params)? = positionRequest(document, at: offset),
+              let result = try? await lsp.request("textDocument/documentHighlight", params: params)
+        else { return [] }
+        return DocumentHighlight.parseAll(result)
+    }
+
     func signatureHelp(in document: Document, at offset: Int) async -> SignatureHelp? {
         guard case let (lsp, params)? = positionRequest(document, at: offset),
               let result = try? await lsp.request("textDocument/signatureHelp", params: params)
@@ -1063,6 +1070,7 @@ final class Workspace {
                 "activeParameterSupport": true,
             ]],
             "definition": ["linkSupport": false],
+            "documentHighlight": ["dynamicRegistration": false],
             "rename": ["prepareSupport": true],
             "documentSymbol": ["hierarchicalDocumentSymbolSupport": true],
             "codeAction": [

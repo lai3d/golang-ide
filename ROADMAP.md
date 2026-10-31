@@ -53,7 +53,7 @@ Released so far: [v0.1.0](https://github.com/lai3d/golang-ide/releases/tag/v0.1.
 
 | # | Item | Notes | Est. |
 |---|---|---|---|
-| 5.1 | ⬜ Occurrence highlights | Highlight other uses of the symbol under the caret (`textDocument/documentHighlight`) | 0.3h |
+| 5.1 | ✅ Occurrence highlights | Highlight other uses of the symbol under the caret (`textDocument/documentHighlight`) | 0.3h |
 | 5.2 | ⬜ Inlay hints | Parameter names and inferred types inline (`textDocument/inlayHint`), toggle in Settings | 0.5h |
 | 5.3 | ⬜ Semantic highlighting | gopls semantic tokens over the regex lexer: types, params, consts, packages, fields | 0.6h |
 | 5.4 | ⬜ Call hierarchy | Incoming / outgoing calls tree for the function at the caret | 0.5h |

@@ -253,6 +253,7 @@ struct DocumentEditor: View {
                 completions: { await workspace.completions(in: document, at: $0) },
                 hover: { await workspace.hover(in: document, at: $0) },
                 signatureHelp: { await workspace.signatureHelp(in: document, at: $0) },
+                highlights: { await workspace.documentHighlights(in: document, at: $0) },
                 definition: { offset in Task { await workspace.jumpToDefinition(from: document, at: offset) } },
                 references: { offset in Task { await workspace.findReferences(in: document, at: offset) } },
                 rename: { offset in Task { await workspace.promptRename(in: document, at: offset) } },

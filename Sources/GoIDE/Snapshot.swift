@@ -40,7 +40,11 @@ enum Snapshot {
                 let lineRange = ns.lineRange(for: NSRange(location: min(start, ns.length), length: 0))
                 var end = NSMaxRange(lineRange)
                 if end > lineRange.location, end <= ns.length, ns.character(at: end - 1) == 0x0A { end -= 1 }
+                if let column = value("--snapshot-column").flatMap(Int.init) {
+                    end = min(lineRange.location + column, end)  // 0-based column
+                }
                 textView.setSelectedRange(NSRange(location: end, length: 0))
+                try? await Task.sleep(for: .milliseconds(900))  // let caret-driven requests land
             }
             if let text = value("--snapshot-type"),
                let textView = NSApp.windows.first?.firstResponder as? NSTextView {
