@@ -84,6 +84,54 @@ public enum Git {
         return statuses
     }
 
+    /// Index (staged) and work-tree states per changed file.
+    public static func changes(in topLevel: URL) -> [GitChange] {
+        let result = run(["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"], in: topLevel)
+        guard result.status == 0 else { return [] }
+        return GitChange.parse(result.output, root: topLevel.path)
+    }
+
+    /// Runs a git command; returns nil on success, else git's error output.
+    private static func mutate(_ arguments: [String], in topLevel: URL, input: String? = nil) -> String? {
+        guard let git = ToolLocator.find("git") else { return "git not found" }
+        let process = Process()
+        process.executableURL = git
+        process.arguments = arguments
+        process.currentDirectoryURL = topLevel
+        process.environment = ToolLocator.environment()
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        let stdin = input.map { _ in Pipe() }
+        if let stdin { process.standardInput = stdin }
+        do { try process.run() } catch { return error.localizedDescription }
+        if let stdin, let input {
+            try? stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8))
+            try? stdin.fileHandleForWriting.close()
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return process.terminationStatus == 0 ? nil : (text.isEmpty ? "git \(arguments.first ?? "") failed" : text)
+    }
+
+    public static func stage(_ paths: [String], in topLevel: URL) -> String? {
+        mutate(["add", "--"] + paths, in: topLevel)
+    }
+
+    public static func unstage(_ paths: [String], in topLevel: URL) -> String? {
+        mutate(["restore", "--staged", "--"] + paths, in: topLevel)
+    }
+
+    /// Drops work-tree changes of tracked files.
+    public static func discard(_ paths: [String], in topLevel: URL) -> String? {
+        mutate(["restore", "--"] + paths, in: topLevel)
+    }
+
+    public static func commit(message: String, in topLevel: URL) -> String? {
+        mutate(["commit", "-q", "-F", "-"], in: topLevel, input: message)
+    }
+
     /// Who last changed a (zero-based) line, blaming `contents` (the editor buffer) so line
     /// numbers match unsaved edits; changed lines come back as uncommitted.
     public static func blame(file: URL, line: Int, contents: String, topLevel: URL) -> BlameLine? {
@@ -260,5 +308,31 @@ public enum SideBySideDiff {
         }
         if hidden > 0 { rows.append(DiffRow(id: rows.count, kind: .gap(hidden), left: nil, right: nil)) }
         return rows
+    }
+}
+
+/// A changed file with its staged (index) and unstaged (work tree) states.
+public struct GitChange: Sendable, Hashable, Identifiable {
+    public let path: String
+    /// Porcelain X (index) and Y (work tree) columns, e.g. "M", "A", "D", "?", " ".
+    public let index: Character
+    public let workTree: Character
+
+    public var id: String { path }
+    public var isUntracked: Bool { index == "?" }
+    public var isStaged: Bool { index != " " && index != "?" }
+    public var hasUnstagedChanges: Bool { workTree != " " }
+
+    public static func parse(_ porcelain: String, root: String) -> [GitChange] {
+        var changes: [GitChange] = []
+        var entries = porcelain.split(separator: "\0", omittingEmptySubsequences: true)[...]
+        while let entry = entries.popFirst() {
+            guard entry.count > 3 else { continue }
+            let x = entry[entry.startIndex], y = entry[entry.index(after: entry.startIndex)]
+            if x == "R" || x == "C" { _ = entries.popFirst() }  // original path follows
+            changes.append(GitChange(path: (root as NSString).appendingPathComponent(String(entry.dropFirst(3))),
+                                     index: x, workTree: y))
+        }
+        return changes.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }
 }

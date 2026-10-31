@@ -208,6 +208,9 @@ struct GoIDECommands: Commands {
                     .disabled(workspace.breakpoints.isEmpty)
             }
             CommandMenu("Git") {
+                Button("Source Control") { workspace.sidebarMode = .git }
+                    .keyboardShortcut("g", modifiers: [.control, .shift])
+                    .disabled(!workspace.isGitRepository)
                 Button("Compare with HEAD") {
                     guard let document = workspace.activeDocument else { return }
                     workspace.diffDocumentID = workspace.diffDocumentID == document.id ? nil : document.id

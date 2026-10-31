@@ -44,7 +44,7 @@ enum TestScope: Equatable {
 }
 
 enum SidebarMode: Hashable {
-    case files, search, outline
+    case files, search, outline, git
 }
 
 /// A row in the Open Quickly palette: a file or a symbol.
@@ -217,8 +217,13 @@ final class Workspace {
     private(set) var gitBases: [String: String] = [:]
     /// The document shown as a diff against HEAD instead of its editor.
     var diffDocumentID: UUID?
+    /// Staged/unstaged changes for the Source Control sidebar.
+    private(set) var gitChanges: [GitChange] = []
+    var commitMessage = ""
+    private(set) var gitError: String?
+    var isGitRepository: Bool { gitTopLevel != nil }
     @ObservationIgnored private var gitTask: Task<Void, Never>?
-    @ObservationIgnored private var gitTopLevel: URL?
+    private(set) var gitTopLevel: URL?
 
     // Call hierarchy
     private(set) var callRoot: CallNode?
@@ -387,19 +392,21 @@ final class Workspace {
         gitTask = Task {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
-            let snapshot = await Task.detached(priority: .utility) { () -> (URL, String?, [String: GitFileStatus], [String: String])? in
+            let snapshot = await Task.detached(priority: .utility) {
+                () -> (URL, String?, [String: GitFileStatus], [String: String], [GitChange])? in
                 guard let top = Git.topLevel(of: rootURL) else { return nil }
                 var bases: [String: String] = [:]
                 for url in files {
                     if let contents = Git.headContents(of: url, topLevel: top) { bases[url.canonicalFileURL.path] = contents }
                 }
-                return (top, Git.currentBranch(in: top), Git.status(in: top), bases)
+                return (top, Git.currentBranch(in: top), Git.status(in: top), bases, Git.changes(in: top))
             }.value
             guard !Task.isCancelled else { return }
             gitTopLevel = snapshot?.0
             gitBranch = snapshot?.1
             gitStatuses = snapshot?.2 ?? [:]
             gitBases = snapshot?.3 ?? [:]
+            gitChanges = snapshot?.4 ?? []
         }
     }
 
@@ -415,6 +422,46 @@ final class Workspace {
 
     func gitBase(for document: Document) -> String? {
         gitBases[Self.key(for: document.url)]
+    }
+
+    // MARK: Source control
+
+    func stage(_ changes: [GitChange]) async { await gitMutation { Git.stage(changes.map(\.path), in: $0) } }
+    func unstage(_ changes: [GitChange]) async { await gitMutation { Git.unstage(changes.map(\.path), in: $0) } }
+
+    /// Discards work-tree changes (untracked files go to the Trash). The UI confirms first.
+    func discard(_ changes: [GitChange]) async {
+        for change in changes where change.isUntracked {
+            try? FileManager.default.trashItem(at: URL(fileURLWithPath: change.path), resultingItemURL: nil)
+        }
+        let tracked = changes.filter { !$0.isUntracked }.map(\.path)
+        if !tracked.isEmpty { await gitMutation { Git.discard(tracked, in: $0) } } else { refreshGit() }
+    }
+
+    /// Commits staged changes (or everything, if nothing is staged and `stageAll`).
+    @discardableResult
+    func commit(stageAll: Bool = false) async -> Bool {
+        let message = commitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else {
+            gitError = "Enter a commit message."
+            return false
+        }
+        saveAll()
+        if stageAll { await gitMutation { Git.stage(["."], in: $0) } }
+        await gitMutation { Git.commit(message: message, in: $0) }
+        guard gitError == nil else { return false }
+        commitMessage = ""
+        flashStatus("Committed: \(message.split(separator: "\n").first ?? "")")
+        return true
+    }
+
+    private func gitMutation(_ operation: @escaping @Sendable (URL) -> String?) async {
+        guard let top = gitTopLevel else { return }
+        gitError = await Task.detached(priority: .userInitiated) { operation(top) }.value
+        refreshGit()
+        // Stay in sync right away for the UI (refreshGit is debounced).
+        let changes = await Task.detached { Git.changes(in: top) }.value
+        gitChanges = changes
     }
 
     /// Blame for a zero-based line of the document's current buffer.

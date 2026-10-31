@@ -65,3 +65,48 @@ import Testing
         #expect(SideBySideDiff.rows(base: base, current: base) == [DiffRow(id: 0, kind: .gap(20), left: nil, right: nil)])
     }
 }
+
+@Suite struct GitChangeTests {
+    @Test func parsesIndexAndWorkTreeColumns() {
+        let changes = GitChange.parse("MM a.go\0A  b.go\0 M c.go\0?? d.go\0", root: "/r")
+        #expect(changes.map(\.path) == ["/r/a.go", "/r/b.go", "/r/c.go", "/r/d.go"])
+        #expect(changes.map(\.isStaged) == [true, true, false, false])
+        #expect(changes.map(\.hasUnstagedChanges) == [true, false, true, true])
+        #expect(changes[3].isUntracked)
+    }
+
+    @Test(.enabled(if: ToolLocator.find("git") != nil))
+    func stagesUnstagesDiscardsAndCommits() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-scm-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.canonicalFileURL
+        Git.run(["init", "-q", "-b", "main"], in: dir)
+        Git.run(["config", "user.name", "Tester"], in: dir)
+        Git.run(["config", "user.email", "t@example.com"], in: dir)
+        let a = dir.appendingPathComponent("a.go"), b = dir.appendingPathComponent("b.go")
+        try "package a\n".write(to: a, atomically: true, encoding: .utf8)
+        try "package b\n".write(to: b, atomically: true, encoding: .utf8)
+        #expect(Git.stage([a.path, b.path], in: dir) == nil)
+        #expect(Git.commit(message: "first", in: dir) == nil)
+
+        try "package a // edit\n".write(to: a, atomically: true, encoding: .utf8)
+        try "package b // edit\n".write(to: b, atomically: true, encoding: .utf8)
+        #expect(Git.stage([a.path], in: dir) == nil)
+        var changes = Git.changes(in: dir)
+        #expect(changes.first { $0.path == a.path }?.isStaged == true)
+        #expect(changes.first { $0.path == b.path }?.isStaged == false)
+
+        #expect(Git.unstage([a.path], in: dir) == nil)
+        #expect(Git.changes(in: dir).allSatisfy { !$0.isStaged })
+        #expect(Git.discard([b.path], in: dir) == nil)
+        #expect(try String(contentsOf: b, encoding: .utf8) == "package b\n")
+
+        #expect(Git.stage([a.path], in: dir) == nil)
+        #expect(Git.commit(message: "Edit a\n\nWith a body.", in: dir) == nil)
+        changes = Git.changes(in: dir)
+        #expect(changes.isEmpty)
+        #expect(Git.run(["log", "-1", "--format=%s"], in: dir).output.trimmingCharacters(in: .whitespacesAndNewlines) == "Edit a")
+        #expect(Git.commit(message: "nothing", in: dir) != nil)  // nothing to commit: error text
+    }
+}

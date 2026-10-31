@@ -119,6 +119,7 @@ struct Sidebar: View {
                 Image(systemName: "folder").help("Files").tag(SidebarMode.files)
                 Image(systemName: "magnifyingglass").help("Find in Project (⇧⌘F)").tag(SidebarMode.search)
                 Image(systemName: "list.bullet.indent").help("Outline").tag(SidebarMode.outline)
+                Image(systemName: "arrow.triangle.branch").help("Source Control (⌃⇧G)").tag(SidebarMode.git)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -128,6 +129,7 @@ struct Sidebar: View {
             case .files: FileTreeView()
             case .search: SearchView()
             case .outline: OutlineView()
+            case .git: SourceControlView()
             }
         }
     }

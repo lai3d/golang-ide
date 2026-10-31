@@ -144,6 +144,15 @@ enum Snapshot {
                 workspace.diffDocumentID = document.id
                 try? await Task.sleep(for: .milliseconds(500))
             }
+            if args.contains("--snapshot-git"), let workspace {
+                workspace.sidebarMode = .git
+                for _ in 0..<30 where workspace.gitChanges.isEmpty { try? await Task.sleep(for: .milliseconds(100)) }
+                if let first = workspace.gitChanges.first(where: { !$0.isStaged && !$0.isUntracked }) {
+                    await workspace.stage([first])
+                }
+                workspace.commitMessage = "Refine order summary"
+                try? await Task.sleep(for: .milliseconds(500))
+            }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()
                 try? await Task.sleep(for: .milliseconds(300))
