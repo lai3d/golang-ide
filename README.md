@@ -1,5 +1,7 @@
 # GoIDE
 
+[![CI](https://github.com/lai3d/golang-ide/actions/workflows/ci.yml/badge.svg)](https://github.com/lai3d/golang-ide/actions/workflows/ci.yml)
+
 A native macOS IDE for Go, written in Swift (SwiftUI + AppKit).
 
 > Early but usable: editing, navigation, refactoring, testing and debugging for Go modules.
@@ -40,12 +42,18 @@ See [ROADMAP.md](ROADMAP.md) for what's next.
 
 GoIDE looks for `go`, `gopls` and `dlv` on `PATH`, `$GOBIN`, `$GOPATH/bin`, `~/go/bin`, `/opt/homebrew/bin` and `/usr/local/go/bin`, so it works when launched from Finder too.
 
+## Install
+
+Download `GoIDE.zip` from [Releases](https://github.com/lai3d/golang-ide/releases), unzip, and move
+`GoIDE.app` to Applications. Builds are ad-hoc signed (not notarized), so the first time
+right-click the app and choose **Open** (or run `xattr -dr com.apple.quarantine GoIDE.app`).
+
 ## Build & run
 
 ```sh
 swift run GoIDE Examples/hello     # run in debug, opening the example project
 swift test                         # unit tests + a gopls end-to-end test
-./scripts/bundle.sh                # build build/GoIDE.app (release, ad-hoc signed)
+./scripts/bundle.sh                # build build/GoIDE.app + GoIDE.zip (release, ad-hoc signed)
 open build/GoIDE.app
 ```
 
@@ -59,8 +67,17 @@ You can also open `Package.swift` in Xcode.
 | `Sources/GoIDE` | SwiftUI app: workspace state, editor view, sidebar, panels |
 | `Tests/GoIDECoreTests` | swift-testing tests |
 | `Examples/hello` | Small Go module for trying things out |
+| `scripts/` | `bundle.sh` (app bundle), `make-icon.swift` (regenerates `Resources/AppIcon.icns`) |
+| `.github/workflows/` | CI (build, test, bundle) and tagged releases (`v*` → GitHub Release) |
 
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Releasing
+
+Push a tag like `v0.2.0`; the Release workflow builds `GoIDE.zip` and attaches it to a GitHub
+release. To ship a build that opens without Gatekeeper warnings you need, outside this repo:
+an Apple Developer Program membership, a Developer ID Application certificate, and notarization
+(`xcrun notarytool`) — then sign with that identity instead of `-` in `scripts/bundle.sh`.

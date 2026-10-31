@@ -42,7 +42,7 @@ Estimates are Claude Code session time.
 | # | Item | Notes | Est. |
 |---|---|---|---|
 | 4.1 | ✅ Settings | ⌘, — font size, tab width, format on save, go/gopls/dlv path overrides | 0.5h |
-| 4.2 | ⬜ CI & packaging | GitHub Actions build + test, app icon, release `.app` zip | 0.5h |
+| 4.2 | ✅ CI & packaging | GitHub Actions build + test + bundle, app icon, tagged releases with `GoIDE.zip` | 0.5h |
 
 **User must do manually** (duration outside Claude's control): Apple Developer Program enrollment,
 Developer ID certificate, notarization credentials — only needed to ship a signed/notarized build to others.
