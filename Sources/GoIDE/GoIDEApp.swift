@@ -230,6 +230,17 @@ struct GoIDECommands: Commands {
                 Button("Run Test at Cursor") { workspace.runTestAtCaret() }
                     .keyboardShortcut("u", modifiers: [.control, .option, .command])
                 Divider()
+                Button("Vet (go vet ./...)") { workspace.runGo(["vet", "./..."]) }
+                    .keyboardShortcut("v", modifiers: [.control, .option, .command])
+                Button("Generate (go generate ./...)") { workspace.runGo(["generate", "./..."]) }
+                Menu("Modules") {
+                    Button("Tidy (go mod tidy)") { workspace.runGo(["mod", "tidy"]) }
+                    Button("Update Dependencies (go get -u ./...)") { workspace.runGo(["get", "-u", "./..."]) }
+                    Button("Download (go mod download)") { workspace.runGo(["mod", "download"]) }
+                    Button("Verify (go mod verify)") { workspace.runGo(["mod", "verify"]) }
+                }
+                .disabled(workspace.rootURL == nil)
+                Divider()
                 Button("Stop") { workspace.stopRun() }
                     .keyboardShortcut(".")
                 Divider()

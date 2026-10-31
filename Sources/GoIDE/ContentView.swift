@@ -524,6 +524,22 @@ struct ProblemsList: View {
     }
 }
 
+private struct OutputLine: View {
+    @Environment(Workspace.self) private var workspace
+    let text: String
+
+    var body: some View {
+        if let reference = GoTestFinder.fileReferences(in: text).first {
+            Button { workspace.revealOutputReference(file: reference.file, line: reference.line) } label: {
+                Text(text).underline().foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.plain)
+        } else {
+            Text(text.isEmpty ? " " : text)
+        }
+    }
+}
+
 struct ReferencesList: View {
     @Environment(Workspace.self) private var workspace
 
@@ -557,15 +573,21 @@ struct OutputView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(workspace.output.isEmpty ? "No output yet. Use Build (⌘B), Test (⌘U) or Run (⌘R)." : workspace.output)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(workspace.output.isEmpty ? .secondary : .primary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if workspace.output.isEmpty {
+                        Text("No output yet. Use Build (⌘B), Test (⌘U) or Run (⌘R).").foregroundStyle(.secondary)
+                    }
+                    // Line by line, so `file.go:12:3` references from go build/vet/run are clickable.
+                    ForEach(Array(workspace.output.split(separator: "\n", omittingEmptySubsequences: false).enumerated()),
+                            id: \.offset) { _, line in
+                        OutputLine(text: String(line))
+                    }
                     Color.clear.frame(height: 1).id("end")
                 }
+                .font(.system(size: 12, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
             }
             .onChange(of: workspace.output) {
                 proxy.scrollTo("end", anchor: .bottom)
