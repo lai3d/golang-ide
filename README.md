@@ -46,3 +46,7 @@ You can also open `Package.swift` in Xcode.
 - Line-number gutter, tabs for multiple open files
 - tree-sitter-go for incremental highlighting
 - Debugging via Delve's DAP mode (breakpoints, stepping, variables)
+
+## License
+
+MIT — see [LICENSE](LICENSE).
