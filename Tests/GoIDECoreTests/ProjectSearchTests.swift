@@ -50,3 +50,19 @@ import Testing
         #expect(overridden.map { ($0.path as NSString).lastPathComponent } == ["b.go"])
     }
 }
+
+@Suite struct ReplaceTests {
+    @Test func replacesLiteralAndRegex() throws {
+        let literal = try ProjectSearch.makeRegex("a.b", options: .init())
+        let t1 = ProjectSearch.template(for: "$x", options: .init())
+        #expect(ProjectSearch.replaceAll(in: "a.b axb a.b", regex: literal, template: t1) == ("$x axb $x", 2))
+
+        let options = SearchOptions(regex: true)
+        let regex = try ProjectSearch.makeRegex(#"get(\w+)\("#, options: options)
+        let t2 = ProjectSearch.template(for: "fetch$1(", options: options)
+        #expect(ProjectSearch.replaceAll(in: "getUser(1) getName(2)", regex: regex, template: t2).text == "fetchUser(1) fetchName(2)")
+        #expect(ProjectSearch.replaceMatch(in: "getUser(1) getName(2)", at: 11, regex: regex, template: t2) == "getUser(1) fetchName(2)")
+        #expect(ProjectSearch.replaceMatch(in: "getUser(1)", at: 3, regex: regex, template: t2) == nil)
+        #expect(ProjectSearch.preview(of: "getUser(", regex: regex, template: t2) == "fetchUser(")
+    }
+}

@@ -148,3 +148,34 @@ public enum ProjectSearch {
         return (preview, NSRange(location: match.location - start, length: max(length, 0)))
     }
 }
+
+// MARK: - Replace
+
+public extension ProjectSearch {
+    /// The replacement template for user input: literal text unless regex mode (then `$1` etc. work).
+    static func template(for replacement: String, options: SearchOptions) -> String {
+        options.regex ? replacement : NSRegularExpression.escapedTemplate(for: replacement)
+    }
+
+    static func replaceAll(in text: String, regex: NSRegularExpression, template: String) -> (text: String, count: Int) {
+        let range = NSRange(location: 0, length: (text as NSString).length)
+        let count = regex.numberOfMatches(in: text, range: range)
+        guard count > 0 else { return (text, 0) }
+        return (regex.stringByReplacingMatches(in: text, range: range, withTemplate: template), count)
+    }
+
+    /// Replaces the single match that starts at `location` (UTF-16), if it's still there.
+    static func replaceMatch(in text: String, at location: Int, regex: NSRegularExpression, template: String) -> String? {
+        let ns = text as NSString
+        guard let match = regex.matches(in: text, range: NSRange(location: 0, length: ns.length))
+            .first(where: { $0.range.location == location && $0.range.length > 0 }) else { return nil }
+        let replacement = regex.replacementString(for: match, in: text, offset: 0, template: template)
+        return ns.replacingCharacters(in: match.range, with: replacement)
+    }
+
+    /// What a match's text becomes (for previews).
+    static func preview(of matched: String, regex: NSRegularExpression, template: String) -> String {
+        regex.stringByReplacingMatches(in: matched, range: NSRange(location: 0, length: (matched as NSString).length),
+                                       withTemplate: template)
+    }
+}

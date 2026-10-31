@@ -374,3 +374,35 @@ import GoIDECore
         await second.shutdown()
     }
 }
+
+@MainActor
+@Suite struct WorkspaceReplaceTests {
+    @Test func replacesInOpenBuffersAndOnDisk() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-replace-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.canonicalFileURL
+        try "package main\n\nfunc main() { getUser(); getName() }\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+        let other = dir.appendingPathComponent("other.go")
+        try "package main\n\nfunc getUser() {}\nfunc getName() {}\n".write(to: other, atomically: true, encoding: .utf8)
+
+        let workspace = Workspace()
+        await workspace.openFolder(dir)
+        let main = try #require(workspace.activeDocument)
+        workspace.searchOptions = SearchOptions(regex: true)
+        workspace.searchQuery = #"get(\w+)\("#
+        workspace.replaceQuery = "fetch$1("
+        await workspace.performSearch()
+        #expect(workspace.searchMatchCount == 4)
+
+        // One match first: the second call in main.go (still in the buffer).
+        let mainResult = try #require(workspace.searchResults.first { $0.path.hasSuffix("main.go") })
+        await workspace.replace(mainResult.matches[1], in: mainResult)
+        #expect(main.text.contains("getUser(); fetchName()") && main.isDirty)
+
+        #expect(await workspace.replaceAllInProject() == 3)
+        #expect(main.text.contains("fetchUser(); fetchName()"))
+        #expect(try String(contentsOf: other, encoding: .utf8) == "package main\n\nfunc fetchUser() {}\nfunc fetchName() {}\n")
+        #expect(workspace.searchMatchCount == 0)
+    }
+}

@@ -171,6 +171,8 @@ final class Workspace {
     private(set) var searchResults: [SearchFileResult] = []
     private(set) var isSearching = false
     private(set) var searchError: String?
+    var replaceQuery = ""
+    var isReplaceVisible = false
     /// Bumped to ask the search field to take focus.
     private(set) var searchFocusRequest = 0
     @ObservationIgnored private var searchTask: Task<Void, Never>?
@@ -1185,6 +1187,68 @@ final class Workspace {
         searchResults = results
         searchError = error
         isSearching = false
+    }
+
+    /// The regex and template for replacing, if the current query is valid.
+    var replacePattern: (regex: NSRegularExpression, template: String)? {
+        guard !searchQuery.isEmpty, let regex = try? ProjectSearch.makeRegex(searchQuery, options: searchOptions) else { return nil }
+        return (regex, ProjectSearch.template(for: replaceQuery, options: searchOptions))
+    }
+
+    /// Replaces every match in the search results' files, re-matching current contents (not stale results).
+    /// Open files change in their buffers (undoable); others are rewritten on disk.
+    @discardableResult
+    func replaceAllInProject() async -> Int {
+        guard let (regex, template) = replacePattern else { return 0 }
+        var total = 0, files = 0
+        var written: [String] = []
+        for file in searchResults {
+            let key = Self.key(for: URL(fileURLWithPath: file.path))
+            if let document = documents.first(where: { Self.key(for: $0.url) == key }) {
+                guard !document.isReadOnly else { continue }
+                let (text, count) = ProjectSearch.replaceAll(in: document.text, regex: regex, template: template)
+                guard count > 0 else { continue }
+                replaceText(of: document, with: text)
+                total += count
+                files += 1
+            } else if let disk = try? String(contentsOfFile: file.path, encoding: .utf8) {
+                let (text, count) = ProjectSearch.replaceAll(in: disk, regex: regex, template: template)
+                guard count > 0 else { continue }
+                do {
+                    try text.write(toFile: file.path, atomically: true, encoding: .utf8)
+                    written.append(file.path)
+                    total += count
+                    files += 1
+                } catch {
+                    appendOutput("Couldn't write \(file.path): \(error.localizedDescription)\n")
+                }
+            }
+        }
+        notifyWatchedFiles(written)
+        flashStatus("Replaced \(total) occurrence\(total == 1 ? "" : "s") in \(files) file\(files == 1 ? "" : "s")")
+        await performSearch()
+        return total
+    }
+
+    /// Replaces one match (if it's still where the results say).
+    func replace(_ match: SearchMatch, in file: SearchFileResult) async {
+        guard let (regex, template) = replacePattern else { return }
+        let url = URL(fileURLWithPath: file.path)
+        let key = Self.key(for: url)
+        let position = TextPosition(line: match.line, character: match.column)
+        if let document = documents.first(where: { Self.key(for: $0.url) == key }) {
+            let location = LineIndex(document.text).offset(of: position)
+            if let text = ProjectSearch.replaceMatch(in: document.text, at: location, regex: regex, template: template) {
+                replaceText(of: document, with: text)
+            }
+        } else if let disk = try? String(contentsOfFile: file.path, encoding: .utf8) {
+            let location = LineIndex(disk).offset(of: position)
+            if let text = ProjectSearch.replaceMatch(in: disk, at: location, regex: regex, template: template) {
+                try? text.write(toFile: file.path, atomically: true, encoding: .utf8)
+                notifyWatchedFiles([file.path])
+            }
+        }
+        await performSearch()
     }
 
     func open(_ match: SearchMatch, in file: SearchFileResult) {

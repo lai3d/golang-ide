@@ -25,6 +25,10 @@ enum Snapshot {
             if let query = value("--snapshot-search"), let workspace {
                 workspace.showSearch()
                 workspace.searchQuery = query
+                if let replacement = value("--snapshot-replace") {
+                    workspace.isReplaceVisible = true
+                    workspace.replaceQuery = replacement
+                }
                 await workspace.performSearch()
                 if let file = workspace.searchResults.first, let match = file.matches.first {
                     workspace.open(match, in: file)
