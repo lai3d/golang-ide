@@ -81,7 +81,7 @@ Released so far: [v0.2.0](https://github.com/lai3d/golang-ide/releases/tag/v0.2.
 | # | Item | Notes | Est. |
 |---|---|---|---|
 | 7.1 | ✅ Editing commands | Toggle comment (⌘/), auto-close brackets & quotes, move line (⌥⌘[ / ⌥⌘]), duplicate line (⇧⌘D), indent / outdent (⌘] / ⌘[) | 0.6h |
-| 7.2 | ⬜ Snippets | gopls snippet completions with tab stops; built-in Go snippets (`iferr`, `fori`, `forr`, `func`, `test`, …) | 0.8h |
+| 7.2 | ✅ Snippets | gopls snippet completions with tab stops; built-in Go snippets (`iferr`, `fori`, `forr`, `func`, `test`, …) | 0.8h |
 | 7.3 | ⬜ Implementations | Go to implementation(s) and type definition | 0.3h |
 | 7.4 | ⬜ Breadcrumbs | Path › type › function above the editor, following the caret | 0.4h |
 | 7.5 | ⬜ Test coverage | Run tests with coverage; covered / uncovered lines tinted, % per file | 0.7h |

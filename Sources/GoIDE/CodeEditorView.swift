@@ -258,9 +258,11 @@ struct CodeEditorView: NSViewRepresentable {
                 pendingCloser = nil
                 let caret = textView.selectedRange().location
                 isApplyingCommand = true
+                // Our own insertion bypasses shouldChange: shift enclosing pairs (and stops) by hand.
+                shiftAutoPairs(for: NSRange(location: caret, length: 0), inserted: closer.utf16.count)
                 textView.insertText(closer, replacementRange: NSRange(location: caret, length: 0))
-                isApplyingCommand = false
                 textView.setSelectedRange(NSRange(location: caret, length: 0))
+                isApplyingCommand = false
                 autoPairs.append(AutoPair(open: caret - 1, close: caret))
             }
             guard parent.highlightGo, !isApplyingCompletion, !isApplyingExternalChange, !isApplyingCommand else { return }
@@ -294,9 +296,16 @@ struct CodeEditorView: NSViewRepresentable {
             guard let textView else { return }
             parent.services.caretMoved(textView.selectedRange().location)
             ruler?.needsDisplay = true
-            // Leaving a pair (caret outside opener…closer) forgets it.
+            // Leaving a pair (caret outside opener…closer) forgets it — but not while we're
+            // inserting text ourselves (the caret passes through intermediate positions).
             let caret = textView.selectedRange().location
-            autoPairs.removeAll { caret <= $0.open || caret > $0.close }
+            if !isApplyingCommand {
+                if let first = snippetStops.first, let last = snippetStops.last,
+                   caret < first.location || caret > NSMaxRange(last) {
+                    endSnippetSession()
+                }
+                autoPairs.removeAll { caret <= $0.open || caret > $0.close }
+            }
             if let fold = folded.first(where: { caret > $0.location && caret < NSMaxRange($0) }) {
                 setFolded(folded.filter { $0 != fold })  // the caret went inside: open it
             }
@@ -672,6 +681,21 @@ struct CodeEditorView: NSViewRepresentable {
                 }
             }
 
+            if !snippetStops.isEmpty {
+                switch selector {
+                case #selector(NSResponder.insertTab(_:)):
+                    moveSnippetStop(by: 1)
+                    return true
+                case #selector(NSResponder.insertBacktab(_:)):
+                    moveSnippetStop(by: -1)
+                    return true
+                case #selector(NSResponder.cancelOperation(_:)) where !signaturePopup.isVisible:
+                    endSnippetSession()
+                    return true
+                default:
+                    break
+                }
+            }
             if selector == #selector(NSResponder.cancelOperation(_:)), signaturePopup.isVisible {
                 hideSignatureHelp()
                 return true
@@ -764,15 +788,73 @@ struct CodeEditorView: NSViewRepresentable {
             return nil
         }
 
-        /// Keeps tracked pairs aligned with an edit; drops pairs whose characters it touches.
+        /// Keeps tracked pairs (and snippet stops) aligned with an edit; drops pairs whose characters it touches.
         private func shiftAutoPairs(for range: NSRange, inserted: Int) {
             let delta = inserted - range.length
+            shiftSnippetStops(for: range, delta: delta)
             autoPairs = autoPairs.compactMap { pair in
                 var pair = pair
                 if NSLocationInRange(pair.open, range) || NSLocationInRange(pair.close, range) { return nil }
                 if range.location <= pair.open { pair.open += delta }
                 if range.location <= pair.close { pair.close += delta }
                 return pair
+            }
+        }
+
+        // MARK: Snippet sessions
+
+        /// Tab stops of the snippet being filled in (absolute ranges; the last is $0).
+        private var snippetStops: [NSRange] = []
+        private var snippetIndex = 0
+
+        private func startSnippetSession(_ stops: [NSRange]) {
+            snippetStops = stops
+            snippetIndex = 0
+            textView?.setSelectedRange(stops[0])
+            highlightSnippetStops()
+        }
+
+        private func moveSnippetStop(by delta: Int) {
+            let next = snippetIndex + delta
+            guard next >= 0 else { return }
+            guard next < snippetStops.count else { return endSnippetSession() }
+            snippetIndex = next
+            textView?.setSelectedRange(snippetStops[next])
+            if next == snippetStops.count - 1 { endSnippetSession(keepSelection: true) }  // reached $0
+            else { highlightSnippetStops() }
+        }
+
+        private func endSnippetSession(keepSelection: Bool = true) {
+            guard !snippetStops.isEmpty else { return }
+            snippetStops = []
+            highlightSnippetStops()
+        }
+
+        /// Typing inside the current stop grows it; edits before a stop move it.
+        private func shiftSnippetStops(for range: NSRange, delta: Int) {
+            guard !snippetStops.isEmpty else { return }
+            snippetStops = snippetStops.enumerated().map { index, stop in
+                var stop = stop
+                if index == snippetIndex, range.location >= stop.location, NSMaxRange(range) <= NSMaxRange(stop) {
+                    stop.length = max(0, stop.length + delta)
+                } else if range.location < stop.location || (range.location == stop.location && index != snippetIndex) {
+                    stop.location = max(0, stop.location + delta)
+                }
+                return stop
+            }
+            DispatchQueue.main.async { [weak self] in self?.highlightSnippetStops() }
+        }
+
+        /// Faint boxes behind the stops still to visit.
+        private func highlightSnippetStops() {
+            guard let textView, let layoutManager = textView.layoutManager else { return }
+            let length = (textView.string as NSString).length
+            layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: NSRange(location: 0, length: length))
+            for (index, stop) in snippetStops.enumerated() where index > snippetIndex && stop.length > 0 && NSMaxRange(stop) <= length {
+                layoutManager.addTemporaryAttributes([
+                    .underlineStyle: NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDash.rawValue,
+                    .underlineColor: NSColor.controlAccentColor,
+                ], forCharacterRange: stop)
             }
         }
 
@@ -851,10 +933,17 @@ struct CodeEditorView: NSViewRepresentable {
             defer { isApplyingCompletion = false }
 
             let caret = textView.selectedRange().location
-            let start = GoIdentifier.prefixStart(in: textView.string as NSString, before: caret)
+            let ns = textView.string as NSString
+            let start = GoIdentifier.prefixStart(in: ns, before: caret)
+            // Snippets keep the line's indentation on their following lines.
+            let lineStart = ns.lineRange(for: NSRange(location: start, length: 0)).location
+            let indent = String(ns.substring(with: NSRange(location: lineStart, length: start - lineStart)).prefix { $0 == "\t" || $0 == " " })
+            let snippet = item.snippet.map { Snippet.parse($0).indented(indent) }
+            let insertion = snippet?.text ?? item.insertText
             textView.undoManager?.beginUndoGrouping()
-            textView.insertText(item.insertText, replacementRange: NSRange(location: start, length: caret - start))
-            var newCaret = start + item.insertText.utf16.count
+            textView.insertText(insertion, replacementRange: NSRange(location: start, length: caret - start))
+            var newCaret = start + insertion.utf16.count
+            var snippetBase = start
 
             // Extra edits (e.g. an auto-added import) sit above the caret; apply bottom-up.
             let index = LineIndex(textView.string)
@@ -865,10 +954,15 @@ struct CodeEditorView: NSViewRepresentable {
             for edit in extras {
                 textView.insertText(edit.text, replacementRange: edit.range)
                 newCaret += edit.text.utf16.count - edit.range.length
+                snippetBase += edit.text.utf16.count - edit.range.length  // edits above shift the snippet
             }
             textView.undoManager?.endUndoGrouping()
-            textView.setSelectedRange(NSRange(location: newCaret, length: 0))
-            textView.scrollRangeToVisible(NSRange(location: newCaret, length: 0))
+            if let snippet, snippet.stops.count > 1 || snippet.stops.first.map({ NSMaxRange($0) != (snippet.text as NSString).length }) == true {
+                startSnippetSession(snippet.stops.map { NSRange(location: $0.location + snippetBase, length: $0.length) })
+            } else {
+                textView.setSelectedRange(NSRange(location: newCaret, length: 0))
+            }
+            textView.scrollRangeToVisible(textView.selectedRange())
         }
 
         /// Applies a programmatic change as one undoable edit, keeping the caret's line/column.

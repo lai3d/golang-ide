@@ -8,6 +8,7 @@ public enum GoplsSettings {
             "functionTypeParameters": true, "parameterNames": true, "rangeVariableTypes": true,
         ],
         "semanticTokens": true,
+        "usePlaceholders": true,  // function call completions get parameter placeholders
     ]
 }
 

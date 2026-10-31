@@ -819,10 +819,16 @@ final class Workspace {
     // MARK: - Language features
 
     func completions(in document: Document, at offset: Int) async -> [CompletionItem] {
+        // Built-in snippets for the word being typed (not after "." — that's a member).
+        let ns = document.text as NSString
+        let start = GoIdentifier.prefixStart(in: ns, before: offset)
+        let prefix = ns.substring(with: NSRange(location: start, length: offset - start))
+        let afterDot = start > 0 && ns.character(at: start - 1) == 0x2E
+        let snippets = document.isGo && !afterDot ? GoSnippets.completions(matching: prefix) : []
         guard case let (lsp, params)? = positionRequest(document, at: offset),
               let result = try? await lsp.request("textDocument/completion", params: params)
-        else { return [] }
-        return CompletionItem.parseList(result)
+        else { return snippets }
+        return CompletionItem.parseList(result) + snippets
     }
 
     func hover(in document: Document, at offset: Int) async -> String? {
@@ -1457,7 +1463,7 @@ final class Workspace {
             "synchronization": ["didSave": true, "dynamicRegistration": false],
             "publishDiagnostics": ["relatedInformation": false],
             "completion": [
-                "completionItem": ["snippetSupport": false, "documentationFormat": ["markdown", "plaintext"]],
+                "completionItem": ["snippetSupport": true, "documentationFormat": ["markdown", "plaintext"]],
             ],
             "hover": ["contentFormat": ["markdown", "plaintext"]],
             "signatureHelp": ["signatureInformation": [

@@ -58,6 +58,9 @@ enum Snapshot {
                 for character in text {
                     if character == "\n" {  // like pressing Return: goes through the editor's command handling
                         textView.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+                    } else if character == "\t" {  // Tab: accepts completions, moves between snippet stops
+                        try? await Task.sleep(for: .milliseconds(900))  // let completions arrive first
+                        textView.doCommand(by: #selector(NSResponder.insertTab(_:)))
                     } else {
                         textView.insertText(String(character), replacementRange: textView.selectedRange())
                     }
@@ -182,6 +185,10 @@ enum Snapshot {
                     try? await Task.sleep(for: .milliseconds(200))
                 }
                 try? await Task.sleep(for: .milliseconds(300))
+            }
+            if ProcessInfo.processInfo.environment["GOIDE_DEBUG_TEXT"] != nil, let text = workspace?.activeDocument?.text {
+                print(text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()
+                    .map { "\($0.offset + 1): \($0.element.debugDescription)" }.joined(separator: "\n"))
             }
             if args.contains("--snapshot-format"), let workspace {
                 await workspace.formatActiveDocument()

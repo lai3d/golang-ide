@@ -55,10 +55,12 @@ public struct CompletionItem: Sendable, Hashable, Identifiable {
     public let sortText: String
     /// Edits elsewhere in the file, e.g. an automatically added import.
     public let additionalEdits: [TextEdit]
+    /// LSP snippet text (with tab stops), when the item should expand as a snippet.
+    public let snippet: String?
 
     public init(label: String, kind: Kind = .text, detail: String? = nil, documentation: String? = nil,
                 insertText: String? = nil, filterText: String? = nil, sortText: String? = nil,
-                additionalEdits: [TextEdit] = []) {
+                additionalEdits: [TextEdit] = [], snippet: String? = nil) {
         self.id = UUID()
         self.label = label
         self.kind = kind
@@ -68,12 +70,17 @@ public struct CompletionItem: Sendable, Hashable, Identifiable {
         self.filterText = filterText ?? label
         self.sortText = sortText ?? label
         self.additionalEdits = additionalEdits
+        self.snippet = snippet
     }
 
     public static func parse(_ value: JSONValue) -> CompletionItem? {
         guard let label = value["label"]?.stringValue else { return nil }
         var insert = value["textEdit"].flatMap(TextEdit.parse)?.newText ?? value["insertText"]?.stringValue ?? label
-        if value["insertTextFormat"]?.intValue == 2 { insert = stripSnippet(insert) }
+        var snippet: String?
+        if value["insertTextFormat"]?.intValue == 2 {
+            snippet = insert
+            insert = Snippet.parse(insert).text
+        }
         let documentation = value["documentation"]?.stringValue ?? value["documentation"]?["value"]?.stringValue
         return CompletionItem(
             label: label,
@@ -83,7 +90,8 @@ public struct CompletionItem: Sendable, Hashable, Identifiable {
             insertText: insert,
             filterText: value["filterText"]?.stringValue,
             sortText: value["sortText"]?.stringValue,
-            additionalEdits: value["additionalTextEdits"]?.arrayValue?.compactMap(TextEdit.parse) ?? [])
+            additionalEdits: value["additionalTextEdits"]?.arrayValue?.compactMap(TextEdit.parse) ?? [],
+            snippet: snippet)
     }
 
     /// Parses a completion result (`CompletionItem[]` or `CompletionList`), ordered by `sortText`.

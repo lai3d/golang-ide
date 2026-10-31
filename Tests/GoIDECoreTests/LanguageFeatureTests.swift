@@ -33,7 +33,8 @@ import Testing
 
     @Test func stripsSnippets() {
         #expect(CompletionItem.stripSnippet("Foo(${1:a}, ${2:b})$0") == "Foo(a, b)")
-        #expect(CompletionItem.parse(["label": "x", "insertText": "x($1)", "insertTextFormat": 2])?.insertText == "x()")
+        let item = CompletionItem.parse(["label": "x", "insertText": "x($1)", "insertTextFormat": 2])
+        #expect(item?.insertText == "x()" && item?.snippet == "x($1)")
     }
 
     @Test func fuzzyMatches() {
