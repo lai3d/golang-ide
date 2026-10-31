@@ -38,6 +38,7 @@ struct CodeEditorView: NSViewRepresentable {
     var breakpoints: Set<Int> = []
     var conditionalBreakpoints: Set<Int> = []
     var executionLine: Int?
+    var coverageLines: [Int: Bool] = [:]
     var isEditable: Bool
     var isActive: Bool
     var settings = EditorSettings()
@@ -173,6 +174,7 @@ struct CodeEditorView: NSViewRepresentable {
             if ruler.executionLine != executionLine { ruler.executionLine = executionLine }
         }
         if textView.executionLine != executionLine { textView.executionLine = executionLine }
+        if textView.coverageLines != coverageLines { textView.coverageLines = coverageLines }
 
         if let editRequest, editRequest.id != coordinator.lastEditRequestID {
             coordinator.lastEditRequestID = editRequest.id
@@ -1370,6 +1372,11 @@ final class CodeTextView: NSTextView {
                       width: item.width - item.padLeft - item.padRight, height: lineRect.height - 4)
     }
 
+    /// Test coverage tint: zero-based line → covered.
+    var coverageLines: [Int: Bool] = [:] {
+        didSet { if coverageLines != oldValue { needsDisplay = true } }
+    }
+
     /// Zero-based line where the debugger is paused (highlighted).
     var executionLine: Int? {
         didSet { if executionLine != oldValue { needsDisplay = true } }
@@ -1406,6 +1413,7 @@ final class CodeTextView: NSTextView {
     /// Subtle highlight behind the caret's line; green behind the debugger's line.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
+        drawCoverage(in: rect)
         if let executionLine, let fragment = lineFragmentRect(forLine: executionLine) {
             NSColor.systemGreen.withAlphaComponent(0.22).setFill()
             fragment.intersection(rect).fill()
@@ -1426,6 +1434,24 @@ final class CodeTextView: NSTextView {
         lineRect.size.width = bounds.width
         NSColor.controlAccentColor.withAlphaComponent(0.07).setFill()
         lineRect.intersection(rect).fill()
+    }
+
+    private func drawCoverage(in rect: NSRect) {
+        guard !coverageLines.isEmpty, let layoutManager else { return }
+        let text = string as NSString
+        let index = LineIndex(string)
+        for (line, covered) in coverageLines where line < index.lineCount {
+            let start = index.lineStarts[line]
+            guard start < text.length else { continue }
+            var fragment = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: start),
+                                                          effectiveRange: nil)
+            fragment.origin.x = 0
+            fragment.origin.y += textContainerOrigin.y
+            fragment.size.width = bounds.width
+            guard fragment.intersects(rect) else { continue }
+            (covered ? NSColor.systemGreen.withAlphaComponent(0.10) : NSColor.systemRed.withAlphaComponent(0.12)).setFill()
+            fragment.intersection(rect).fill()
+        }
     }
 
     /// The full-width rect of a zero-based line, in view coordinates.

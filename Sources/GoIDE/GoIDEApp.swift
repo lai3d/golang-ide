@@ -262,6 +262,10 @@ struct GoIDECommands: Commands {
                     .keyboardShortcut("u", modifiers: [.control, .command])
                 Button("Run Test at Cursor") { workspace.runTestAtCaret() }
                     .keyboardShortcut("u", modifiers: [.control, .option, .command])
+                Button("Test with Coverage") { workspace.runTestsWithCoverage() }
+                    .keyboardShortcut("u", modifiers: [.control, .shift, .command])
+                Button(workspace.showCoverage ? "Hide Coverage" : "Show Coverage") { workspace.showCoverage.toggle() }
+                    .disabled(workspace.coverage == nil)
                 Divider()
                 Button("Terminal") { workspace.showTerminal() }
                     .keyboardShortcut("`", modifiers: .control)

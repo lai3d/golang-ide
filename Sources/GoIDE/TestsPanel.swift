@@ -24,6 +24,20 @@ struct TestsPanel: View {
                     summary(report)
                     Divider()
                     List(selection: $workspace.selectedTestID) {
+                        if let coverage = workspace.coverage, !coverage.files.isEmpty {
+                            Section("Coverage by file") {
+                                ForEach(coverage.files.sorted { $0.value.percent < $1.value.percent }, id: \.key) { path, file in
+                                    HStack {
+                                        Text(workspace.displayPath(path)).lineLimit(1).truncationMode(.head)
+                                        Spacer()
+                                        Text(String(format: "%.0f%%", file.percent)).monospacedDigit()
+                                            .foregroundStyle(file.percent >= 70 ? .green : .orange)
+                                    }
+                                    .contentShape(Rectangle())
+                                    .onTapGesture(count: 2) { workspace.openFile(URL(fileURLWithPath: path)) }
+                                }
+                            }
+                        }
                         ForEach(report.tests) { test in
                             TestRow(test: test)
                                 .tag(test.id)
@@ -64,6 +78,11 @@ struct TestsPanel: View {
             Label("\(report.failed)", systemImage: "xmark.circle.fill").foregroundStyle(report.failed > 0 ? .red : .secondary)
             if report.skipped > 0 {
                 Label("\(report.skipped)", systemImage: "forward.circle.fill").foregroundStyle(.secondary)
+            }
+            if let coverage = workspace.coverage {
+                Text(String(format: "Coverage %.1f%%", coverage.percent))
+                    .foregroundStyle(coverage.percent >= 70 ? .green : .orange)
+                    .help("Statement coverage of the last run")
             }
         }
         .font(.callout.monospacedDigit())

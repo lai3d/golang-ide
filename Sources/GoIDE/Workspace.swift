@@ -1571,7 +1571,21 @@ final class Workspace {
     // MARK: - Tests
 
     /// Runs `go test -json` for a scope and streams results into `testReport`.
-    func runTests(_ scope: TestScope) {
+    /// Coverage from the last "Test with Coverage" run.
+    private(set) var coverage: CoverageReport?
+    var showCoverage = true
+
+    /// Zero-based line → covered, for the editor tint (empty when hidden or not measured).
+    func coverageLines(for document: Document) -> [Int: Bool] {
+        guard showCoverage, let coverage else { return [:] }
+        return coverage.files[Self.key(for: document.url)]?.lines ?? [:]
+    }
+
+    func runTestsWithCoverage() {
+        runTests(.all, coverage: true)
+    }
+
+    func runTests(_ scope: TestScope, coverage measure: Bool = false) {
         guard let rootURL, !isRunning else { return }
         guard let go = ToolLocator.find("go") else {
             output = "go not found. Install Go from https://go.dev/dl/\n"
@@ -1580,6 +1594,8 @@ final class Workspace {
         }
         saveAll()
         var arguments = ["test", "-json"]
+        let profile = FileManager.default.temporaryDirectory.appendingPathComponent("goide-cover-\(UUID().uuidString).out")
+        if measure { arguments.append("-coverprofile=" + profile.path) }
         switch scope {
         case .all:
             arguments.append("./...")
@@ -1619,6 +1635,7 @@ final class Workspace {
                 try? await Task.sleep(for: .milliseconds(80))  // let the last lines land
                 self.isRunning = false
                 self.runProcess = nil
+                if measure { self.loadCoverage(profile) }
                 let r = self.testReport
                 self.appendOutput("\n[\(r.passed) passed, \(r.failed) failed, \(r.skipped) skipped — exit \(status)]\n")
                 if r.tests.isEmpty, !r.buildOutput.isEmpty { self.bottomTab = .output }  // build failed
@@ -1632,6 +1649,20 @@ final class Workspace {
             isRunning = false
             appendOutput("Failed to start go: \(error.localizedDescription)\n")
         }
+    }
+
+    private func loadCoverage(_ profile: URL) {
+        defer { try? FileManager.default.removeItem(at: profile) }
+        guard let rootURL, let text = try? String(contentsOf: profile, encoding: .utf8),
+              let goMod = try? String(contentsOf: rootURL.appendingPathComponent("go.mod"), encoding: .utf8),
+              let module = CoverageReport.modulePath(goMod: goMod)
+        else { return }
+        coverage = CoverageReport.parse(text, modulePath: module, root: Self.key(for: rootURL))
+        showCoverage = true
+    }
+
+    func clearCoverage() {
+        coverage = nil
     }
 
     private func consumeTestLine(_ line: String) {

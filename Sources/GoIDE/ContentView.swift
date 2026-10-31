@@ -312,6 +312,7 @@ struct DocumentEditor: View {
             breakpoints: workspace.breakpointLines(for: document),
             conditionalBreakpoints: workspace.conditionalBreakpointLines(for: document),
             executionLine: workspace.executionLine(for: document),
+            coverageLines: workspace.coverageLines(for: document),
             isEditable: !document.isReadOnly,
             isActive: isActive,
             settings: EditorSettings(fontSize: fontSize, tabWidth: tabWidth),
