@@ -89,6 +89,8 @@ Released in [v0.3.0](https://github.com/lai3d/golang-ide/releases/tag/v0.3.0) (p
 
 ## Phase 8 — Go tooling & refactoring
 
+Released in [v0.4.0](https://github.com/lai3d/golang-ide/releases/tag/v0.4.0) (phases 1–8).
+
 | # | Item | Notes | Est. |
 |---|---|---|---|
 | 8.1 | ✅ Dependencies sidebar | `go.mod` requires (direct / indirect, replaces), available updates (`go list -m -u`), upgrade one / all direct, tidy, jump to the `require` line | 0.8h |
