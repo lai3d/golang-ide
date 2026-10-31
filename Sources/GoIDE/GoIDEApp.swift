@@ -155,6 +155,18 @@ struct GoIDECommands: Commands {
                 }
                 .keyboardShortcut("j", modifiers: [.control, .command])
                 .disabled(!workspace.isGoFile)
+                Button("Jump to Implementation") {
+                    guard let document = workspace.activeDocument else { return }
+                    Task { await workspace.jumpToImplementation(from: document, at: document.caretOffset) }
+                }
+                .keyboardShortcut("j", modifiers: [.option, .command])
+                .disabled(!workspace.isGoFile)
+                Button("Jump to Type Definition") {
+                    guard let document = workspace.activeDocument else { return }
+                    Task { await workspace.jumpToTypeDefinition(from: document, at: document.caretOffset) }
+                }
+                .keyboardShortcut("j", modifiers: [.control, .option, .command])
+                .disabled(!workspace.isGoFile)
                 Button("Find References") {
                     guard let document = workspace.activeDocument else { return }
                     Task { await workspace.findReferences(in: document, at: document.caretOffset) }

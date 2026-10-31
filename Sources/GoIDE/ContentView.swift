@@ -332,6 +332,8 @@ struct DocumentEditor: View {
                 definition: { offset in Task { await workspace.jumpToDefinition(from: document, at: offset) } },
                 references: { offset in Task { await workspace.findReferences(in: document, at: offset) } },
                 callHierarchy: { offset in Task { await workspace.showCallHierarchy(in: document, at: offset) } },
+                implementation: { offset in Task { await workspace.jumpToImplementation(from: document, at: offset) } },
+                typeDefinition: { offset in Task { await workspace.jumpToTypeDefinition(from: document, at: offset) } },
                 rename: { offset in Task { await workspace.promptRename(in: document, at: offset) } },
                 codeActions: { await workspace.codeActions(in: document, at: $0, length: $1) },
                 performAction: { action in Task { await workspace.perform(action) } },

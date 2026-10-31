@@ -882,6 +882,46 @@ final class Workspace {
         return SignatureHelp.parse(result)
     }
 
+    /// Interfaces → implementing types (and methods → implementations): jump if one, list if several.
+    func jumpToImplementation(from document: Document, at offset: Int) async {
+        await jumpToLocations(method: "textDocument/implementation", what: "implementation",
+                              from: document, at: offset)
+    }
+
+    /// A value's type declaration.
+    func jumpToTypeDefinition(from document: Document, at offset: Int) async {
+        await jumpToLocations(method: "textDocument/typeDefinition", what: "type definition",
+                              from: document, at: offset)
+    }
+
+    private func jumpToLocations(method: String, what: String, from document: Document, at offset: Int) async {
+        guard case let (lsp, params)? = positionRequest(document, at: offset) else { return }
+        let symbol = GoIdentifier.wordRange(in: document.text as NSString, at: offset)
+            .map { (document.text as NSString).substring(with: $0) } ?? "symbol"
+        let locations = (try? await lsp.request(method, params: params)).map(Location.parseAll) ?? []
+        guard !locations.isEmpty else {
+            flashStatus("No \(what) found for ‘\(symbol)’")
+            return
+        }
+        if locations.count == 1, let target = URL(string: locations[0].uri), target.isFileURL {
+            backStack.append(NavigationPoint(url: document.url, position: LineIndex(document.text).position(of: offset)))
+            navigate(to: URL(fileURLWithPath: target.path), position: locations[0].start)
+            return
+        }
+        showLocations(locations, title: "\(locations.count) \(what)s of ‘\(symbol)’")
+    }
+
+    /// Lists locations in the References panel.
+    private func showLocations(_ locations: [Location], title: String) {
+        referenceResults = ProjectSearch.results(for: locations) { path in
+            let key = Self.key(for: URL(fileURLWithPath: path))
+            return documents.first { Self.key(for: $0.url) == key }?.text
+                ?? (try? String(contentsOfFile: path, encoding: .utf8))
+        }
+        referenceTitle = title
+        bottomTab = .references
+    }
+
     func findReferences(in document: Document, at offset: Int) async {
         guard case let (lsp, .object(params))? = positionRequest(document, at: offset) else { return }
         var request = params
@@ -1472,6 +1512,8 @@ final class Workspace {
                 "activeParameterSupport": true,
             ]],
             "definition": ["linkSupport": false],
+            "implementation": ["linkSupport": false],
+            "typeDefinition": ["linkSupport": false],
             "documentHighlight": ["dynamicRegistration": false],
             "callHierarchy": ["dynamicRegistration": false],
             "inlayHint": ["dynamicRegistration": false],

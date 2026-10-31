@@ -406,3 +406,49 @@ import GoIDECore
         #expect(workspace.searchMatchCount == 0)
     }
 }
+
+@MainActor
+@Suite struct WorkspaceImplementationTests {
+    @Test(.enabled(if: GoIDECore.ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
+    func findsImplementationsAndTypeDefinitions() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-impl-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.canonicalFileURL
+        try "module example.com/impl\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
+        let source = """
+            package main
+
+            type Shape interface{ Area() float64 }
+
+            type Square struct{ s float64 }
+
+            func (q Square) Area() float64 { return q.s * q.s }
+
+            type Circle struct{ r float64 }
+
+            func (c Circle) Area() float64 { return 3 * c.r * c.r }
+
+            func main() {
+            \tsq := Square{2}
+            \t_ = sq
+            }
+
+            """
+        try source.write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+
+        let workspace = Workspace()
+        await workspace.openFolder(dir)
+        let main = try #require(workspace.activeDocument)
+        let ns = main.text as NSString
+
+        // Interface with two implementations: listed.
+        await workspace.jumpToImplementation(from: main, at: ns.range(of: "Shape").location + 1)
+        #expect(workspace.referenceTitle == "2 implementations of ‘Shape’")
+        #expect(workspace.referenceResults.first?.matches.count == 2)
+
+        // Variable → its type: jumps (one location).
+        await workspace.jumpToTypeDefinition(from: main, at: ns.range(of: "_ = sq").location + 5)
+        #expect(main.revealTarget?.position == TextPosition(line: 4, character: 5))  // type Square
+    }
+}

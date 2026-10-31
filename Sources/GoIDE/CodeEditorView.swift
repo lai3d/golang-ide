@@ -15,6 +15,8 @@ struct EditorServices {
     var definition: @MainActor (Int) -> Void
     var references: @MainActor (Int) -> Void
     var callHierarchy: @MainActor (Int) -> Void
+    var implementation: @MainActor (Int) -> Void
+    var typeDefinition: @MainActor (Int) -> Void
     var rename: @MainActor (Int) -> Void
     var codeActions: @MainActor (_ offset: Int, _ length: Int) async -> [CodeAction]
     var performAction: @MainActor (CodeAction) -> Void
@@ -1172,6 +1174,8 @@ struct CodeEditorView: NSViewRepresentable {
             dismissPopups()
             return [
                 ActionMenuItem(title: "Jump to Definition") { [weak self] in self?.parent.services.definition(offset) },
+                ActionMenuItem(title: "Jump to Implementation") { [weak self] in self?.parent.services.implementation(offset) },
+                ActionMenuItem(title: "Jump to Type Definition") { [weak self] in self?.parent.services.typeDefinition(offset) },
                 ActionMenuItem(title: "Find References") { [weak self] in self?.parent.services.references(offset) },
                 ActionMenuItem(title: "Call Hierarchy") { [weak self] in self?.parent.services.callHierarchy(offset) },
                 ActionMenuItem(title: "Rename Symbol…") { [weak self] in self?.parent.services.rename(offset) },
