@@ -39,5 +39,12 @@ import Testing
         #expect(statuses[dir.appendingPathComponent("extra.go").path] == .untracked)
         #expect(Git.headContents(of: dir.appendingPathComponent("main.go"), topLevel: dir) == "package main\n")
         #expect(Git.headContents(of: dir.appendingPathComponent("extra.go"), topLevel: dir) == nil)
+
+        // Blame the buffer: line 0 is committed, line 2 is new (uncommitted).
+        let buffer = "package main\n\nfunc main() {}\n"
+        let committed = try #require(Git.blame(file: dir.appendingPathComponent("main.go"), line: 0, contents: buffer, topLevel: dir))
+        #expect(committed.author == "t" && committed.summary == "init" && !committed.isUncommitted)
+        let fresh = try #require(Git.blame(file: dir.appendingPathComponent("main.go"), line: 2, contents: buffer, topLevel: dir))
+        #expect(fresh.isUncommitted)
     }
 }

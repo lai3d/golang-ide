@@ -174,6 +174,7 @@ final class Workspace {
     /// HEAD contents of open files (for gutter change bars), keyed by path.
     private(set) var gitBases: [String: String] = [:]
     @ObservationIgnored private var gitTask: Task<Void, Never>?
+    @ObservationIgnored private var gitTopLevel: URL?
 
     // Call hierarchy
     private(set) var callRoot: CallNode?
@@ -309,18 +310,19 @@ final class Workspace {
         gitTask = Task {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
-            let snapshot = await Task.detached(priority: .utility) { () -> (String?, [String: GitFileStatus], [String: String])? in
+            let snapshot = await Task.detached(priority: .utility) { () -> (URL, String?, [String: GitFileStatus], [String: String])? in
                 guard let top = Git.topLevel(of: rootURL) else { return nil }
                 var bases: [String: String] = [:]
                 for url in files {
                     if let contents = Git.headContents(of: url, topLevel: top) { bases[url.canonicalFileURL.path] = contents }
                 }
-                return (Git.currentBranch(in: top), Git.status(in: top), bases)
+                return (top, Git.currentBranch(in: top), Git.status(in: top), bases)
             }.value
             guard !Task.isCancelled else { return }
-            gitBranch = snapshot?.0
-            gitStatuses = snapshot?.1 ?? [:]
-            gitBases = snapshot?.2 ?? [:]
+            gitTopLevel = snapshot?.0
+            gitBranch = snapshot?.1
+            gitStatuses = snapshot?.2 ?? [:]
+            gitBases = snapshot?.3 ?? [:]
         }
     }
 
@@ -336,6 +338,15 @@ final class Workspace {
 
     func gitBase(for document: Document) -> String? {
         gitBases[Self.key(for: document.url)]
+    }
+
+    /// Blame for a zero-based line of the document's current buffer.
+    func blame(in document: Document, line: Int) async -> BlameLine? {
+        guard let top = gitTopLevel, gitBase(for: document) != nil else { return nil }  // tracked files only
+        let url = document.url, text = document.text
+        return await Task.detached(priority: .utility) {
+            Git.blame(file: url, line: line, contents: text, topLevel: top)
+        }.value
     }
 
     /// Hidden files and build/VCS folders inside the project don't matter to us.

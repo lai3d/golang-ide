@@ -20,6 +20,7 @@ private struct EditorSettingsTab: View {
     @AppStorage(EditorSettings.tabWidthKey) private var tabWidth = 4
     @AppStorage("formatOnSave") private var formatOnSave = true
     @AppStorage("inlayHints") private var inlayHints = true
+    @AppStorage("inlineBlame") private var inlineBlame = true
 
     var body: some View {
         Form {
@@ -36,6 +37,7 @@ private struct EditorSettingsTab: View {
             .frame(width: 280)
             Toggle("Format and organize imports on save", isOn: $formatOnSave)
             Toggle("Show inlay hints (parameter names, inferred types)", isOn: $inlayHints)
+            Toggle("Show Git blame for the current line", isOn: $inlineBlame)
             Text("func main() {\n\tfmt.Println(\"preview\")\n}")
                 .font(.system(size: fontSize, design: .monospaced))
                 .lineLimit(nil)

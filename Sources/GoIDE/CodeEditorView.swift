@@ -10,6 +10,7 @@ struct EditorServices {
     var highlights: @MainActor (Int) async -> [DocumentHighlight]
     var inlayHints: @MainActor () async -> [InlayHint]
     var semanticTokens: @MainActor () async -> [SemanticToken]
+    var blame: @MainActor (Int) async -> BlameLine?
     var definition: @MainActor (Int) -> Void
     var references: @MainActor (Int) -> Void
     var callHierarchy: @MainActor (Int) -> Void
@@ -37,6 +38,7 @@ struct CodeEditorView: NSViewRepresentable {
     var languageServerEpoch = 0
     /// The file at HEAD, for change bars (nil: untracked or not in Git).
     var gitBase: String?
+    var showBlame = true
     var diagnostics: [Diagnostic]
     var reveal: RevealTarget?
     var quickFixRequest = 0
@@ -146,9 +148,11 @@ struct CodeEditorView: NSViewRepresentable {
             coordinator.scheduleInlayHints(after: .milliseconds(300))
         }
         coordinator.updateTestMarkers()
-        if coordinator.appliedGitBase != gitBase {
+        if coordinator.appliedGitBase != gitBase || coordinator.appliedShowBlame != showBlame {
             coordinator.appliedGitBase = gitBase
+            coordinator.appliedShowBlame = showBlame
             coordinator.scheduleLineChanges(after: .zero)
+            coordinator.scheduleBlame()
         }
         if let ruler = coordinator.ruler {
             if ruler.breakpoints != breakpoints { ruler.breakpoints = breakpoints }
@@ -256,11 +260,47 @@ struct CodeEditorView: NSViewRepresentable {
             ruler?.needsDisplay = true
             if signaturePopup.isVisible { scheduleSignatureHelp(after: .milliseconds(80)) }
             scheduleOccurrences()
+            scheduleBlame()
+        }
+
+        // MARK: Inline blame
+
+        private var blameTask: Task<Void, Never>?
+
+        /// Shows who last changed the caret's line, at the end of the line.
+        func scheduleBlame() {
+            blameTask?.cancel()
+            guard let textView, parent.showBlame, parent.gitBase != nil else {
+                textView?.blame = nil
+                return
+            }
+            let line = LineIndex(textView.string).position(of: textView.selectedRange().location).line
+            if textView.blame?.line != line { textView.blame = nil }
+            blameTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled, let self else { return }
+                let info = await self.parent.services.blame(line)
+                guard !Task.isCancelled, let textView = self.textView else { return }
+                textView.blame = info.map { (line, Self.describe($0)) }
+            }
+        }
+
+        private static let relativeFormatter: RelativeDateTimeFormatter = {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .full
+            return formatter
+        }()
+
+        static func describe(_ blame: BlameLine) -> String {
+            if blame.isUncommitted { return "You · Uncommitted changes" }
+            let when = relativeFormatter.localizedString(for: blame.date, relativeTo: Date())
+            return "\(blame.author), \(when) · \(blame.summary)"
         }
 
         // MARK: Git change bars
 
         var appliedGitBase: String??
+        var appliedShowBlame: Bool?
         private var lineChangesTask: Task<Void, Never>?
 
         func scheduleLineChanges(after delay: Duration) {
@@ -905,8 +945,34 @@ final class CodeTextView: NSTextView {
         didSet { needsDisplay = true }
     }
 
+    /// Blame for the caret line, drawn after the line's text.
+    var blame: (line: Int, text: String)? {
+        didSet { if blame?.line != oldValue?.line || blame?.text != oldValue?.text { needsDisplay = true } }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        drawBlame(in: dirtyRect)
+        drawInlayHints(in: dirtyRect)
+    }
+
+    private func drawBlame(in dirtyRect: NSRect) {
+        guard let blame, let layoutManager, let textContainer, var lineRect = lineFragmentRect(forLine: blame.line) else { return }
+        guard lineRect.intersects(dirtyRect) else { return }
+        // End of the line's text: the used rect of its last fragment.
+        let glyph = layoutManager.glyphIndex(for: NSPoint(x: lineRect.maxX, y: lineRect.midY - textContainerOrigin.y),
+                                             in: textContainer)
+        let used = layoutManager.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+        let font = NSFont.systemFont(ofSize: max(9, (self.font?.pointSize ?? 13) - 2))
+        let text = NSAttributedString(string: blame.text, attributes: [
+            .font: font, .foregroundColor: NSColor.tertiaryLabelColor,
+        ])
+        let size = text.size()
+        lineRect.origin.x = used.maxX + textContainerOrigin.x + 36
+        text.draw(at: NSPoint(x: lineRect.minX, y: lineRect.midY - size.height / 2))
+    }
+
+    private func drawInlayHints(in dirtyRect: NSRect) {
         guard !inlayItems.isEmpty, let layoutManager, let textContainer else { return }
         let length = (string as NSString).length
         let origin = textContainerOrigin

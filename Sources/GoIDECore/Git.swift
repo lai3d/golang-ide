@@ -12,7 +12,7 @@ public enum Git {
     }
 
     @discardableResult
-    public static func run(_ arguments: [String], in directory: URL) -> Result {
+    public static func run(_ arguments: [String], in directory: URL, input: String? = nil) -> Result {
         guard let git = ToolLocator.find("git") else { return Result(status: -1, output: "") }
         let process = Process()
         process.executableURL = git
@@ -22,10 +22,17 @@ public enum Git {
         let out = Pipe()
         process.standardOutput = out
         process.standardError = Pipe()
+        let stdin = input.map { _ in Pipe() }
+        if let stdin { process.standardInput = stdin }
         do {
             try process.run()
         } catch {
             return Result(status: -1, output: "")
+        }
+        if let stdin, let input {
+            // git reads all of stdin before writing output, so a plain write can't deadlock.
+            try? stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8))
+            try? stdin.fileHandleForWriting.close()
         }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
@@ -75,6 +82,16 @@ public enum Git {
             statuses[(root as NSString).appendingPathComponent(path)] = status
         }
         return statuses
+    }
+
+    /// Who last changed a (zero-based) line, blaming `contents` (the editor buffer) so line
+    /// numbers match unsaved edits; changed lines come back as uncommitted.
+    public static func blame(file: URL, line: Int, contents: String, topLevel: URL) -> BlameLine? {
+        let relative = String(file.canonicalFileURL.path.dropFirst(topLevel.path.count + 1))
+        let result = run(["blame", "--porcelain", "-L", "\(line + 1),\(line + 1)", "--contents", "-", "--", relative],
+                         in: topLevel, input: contents)
+        guard result.status == 0 else { return nil }
+        return BlameLine.parse(porcelain: result.output)
     }
 
     /// A file's contents at HEAD (nil if it isn't tracked there).
@@ -135,5 +152,28 @@ public struct LineChanges: Sendable, Hashable {
             }
         }
         return changes
+    }
+}
+
+/// One line of `git blame --porcelain`.
+public struct BlameLine: Sendable, Hashable {
+    public let commit: String
+    public let author: String
+    public let date: Date
+    public let summary: String
+
+    public var isUncommitted: Bool { commit.allSatisfy { $0 == "0" } }
+
+    public static func parse(porcelain: String) -> BlameLine? {
+        let lines = porcelain.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let header = lines.first, let commit = header.split(separator: " ").first, commit.count >= 7 else { return nil }
+        var author = "", summary = "", time: TimeInterval = 0
+        for line in lines.dropFirst() {
+            if line.hasPrefix("author ") { author = String(line.dropFirst(7)) }
+            else if line.hasPrefix("author-time ") { time = TimeInterval(line.dropFirst(12)) ?? 0 }
+            else if line.hasPrefix("summary ") { summary = String(line.dropFirst(8)) }
+            else if line.hasPrefix("\t") { break }  // the line's content ends the header
+        }
+        return BlameLine(commit: String(commit), author: author, date: Date(timeIntervalSince1970: time), summary: summary)
     }
 }

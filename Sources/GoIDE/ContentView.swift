@@ -257,6 +257,7 @@ struct DocumentEditor: View {
     @AppStorage(EditorSettings.fontSizeKey) private var fontSize = 13.0
     @AppStorage(EditorSettings.tabWidthKey) private var tabWidth = 4
     @AppStorage("inlayHints") private var showInlayHints = true
+    @AppStorage("inlineBlame") private var showBlame = true
     let document: Document
     let isActive: Bool
 
@@ -274,6 +275,7 @@ struct DocumentEditor: View {
             showInlayHints: showInlayHints,
             languageServerEpoch: workspace.languageServerEpoch,
             gitBase: workspace.gitBase(for: document),
+            showBlame: showBlame,
             diagnostics: workspace.diagnostics(for: document),
             reveal: document.revealTarget,
             quickFixRequest: workspace.quickFixRequest,
@@ -284,6 +286,7 @@ struct DocumentEditor: View {
                 highlights: { await workspace.documentHighlights(in: document, at: $0) },
                 inlayHints: { await workspace.inlayHints(in: document) },
                 semanticTokens: { await workspace.semanticTokens(in: document) },
+                blame: { await workspace.blame(in: document, line: $0) },
                 definition: { offset in Task { await workspace.jumpToDefinition(from: document, at: offset) } },
                 references: { offset in Task { await workspace.findReferences(in: document, at: offset) } },
                 callHierarchy: { offset in Task { await workspace.showCallHierarchy(in: document, at: offset) } },
